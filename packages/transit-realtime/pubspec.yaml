@@ -11,7 +11,7 @@ dependencies:
     sdk: flutter
   contracts:
     path: ../contracts
-  protobuf: ^3.1.0
+  gtfs_realtime: ^2.0.0        # official GTFS-RT bindings
   http: ^1.2.1
   riverpod: ^2.5.1
   rxdart: ^0.27.7
