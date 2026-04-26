@@ -14,9 +14,12 @@ dependencies:
   riverpod: ^2.5.1
   rxdart: ^0.27.7
   equatable: ^2.0.5
-
-dev_dependencies:
-  flutter_lints: ^3.0.0
   drift: ^2.15.0
   sqlite3: ^2.4.0
   path_provider: ^2.1.0
+  archive: ^3.6.1   # for reading GTFS zip files
+
+dev_dependencies:
+  flutter_lints: ^3.0.0
+  drift_dev: ^2.15.0
+  build_runner: ^2.4.8
