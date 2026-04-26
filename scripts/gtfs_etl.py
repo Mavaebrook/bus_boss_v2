@@ -13,6 +13,7 @@ import math
 import hashlib
 import sys
 import os
+import io            # ← ADDED
 from datetime import datetime, timezone
 
 # ----------------------------------------------------------------------
@@ -124,9 +125,8 @@ def encode_polyline(points):
         lat = round(lat, 5)
         lng = round(lng, 5)
         # encode latitudes
-        for val in (lat, lng):
+        for val, prev in [(lat, prev_lat), (lng, prev_lng)]:
             cur = round(val * 1e5)
-            prev = (prev_lat if val == lat else prev_lng)
             diff = cur - prev
             cur_enc = ~(diff << 1) if diff < 0 else (diff << 1)
             while cur_enc >= 0x20:
@@ -470,12 +470,115 @@ def run_etl(gtfs_zip_path, db_path):
         FROM _stop_times_staging st
         JOIN _trips_staging t ON st.trip_id = t.trip_id
     """)
-
     # ------------------------------------------------------------------
     # Materialize active_services (expand calendar + overrides)
     # ------------------------------------------------------------------
     cur.execute("SELECT * FROM _calendar_staging")
     cal = cur.fetchall()
-    # Minimal expansion: for demo, expand full range. In production, filter todays+future.
-    # We use the feed’s min/max dates from valid_from/valid_to later.
-    services = {}  # date -> set(serv
+    services = {}  # date -> set(service_ids)
+    for (svc_id, mon, tue, wed, thu, fri, sat, sun, start, end) in cal:
+        from datetime import timedelta, date
+        d = date(start//10000, (start//100)%100, start%100)
+        end_d = date(end//10000, (end//100)%100, end%100)
+        while d <= end_d:
+            weekday = d.weekday()
+            active = [mon, tue, wed, thu, fri, sat, sun][weekday]
+            date_int = d.year*10000 + d.month*100 + d.day
+            if active:
+                services.setdefault(date_int, set()).add(svc_id)
+            d += timedelta(days=1)
+    # Apply calendar_dates overrides
+    cur.execute("SELECT service_id, date, exception_type FROM _calendar_dates_staging")
+    for svc_id, d, ex_type in cur:
+        if ex_type == 1:  # added
+            services.setdefault(d, set()).add(svc_id)
+        elif ex_type == 2:  # removed
+            if d in services:
+                services[d].discard(svc_id)
+
+    active_rows = []
+    for d, svc_set in services.items():
+        for sid in svc_set:
+            active_rows.append((d, sid))
+    cur.executemany("INSERT INTO _active_services_staging VALUES (?,?)", active_rows)
+
+    # ------------------------------------------------------------------
+    # Create indexes on staging tables (after bulk insert)
+    # ------------------------------------------------------------------
+    index_sqls = [
+        "CREATE INDEX idx_routes_short_name ON _routes_staging(route_short_name)",
+        "CREATE INDEX idx_trips_route ON _trips_staging(route_id)",
+        "CREATE INDEX idx_trips_service ON _trips_staging(service_id, route_id)",
+        "CREATE INDEX idx_trips_shape ON _trips_staging(shape_id)",
+        "CREATE INDEX idx_st_arrival_backwards ON _stop_times_staging(stop_id, arrival_time_seconds DESC)",
+        "CREATE INDEX idx_st_departure ON _stop_times_staging(stop_id, departure_time_seconds)",
+        "CREATE INDEX idx_st_trip ON _stop_times_staging(trip_id, stop_sequence)",
+        "CREATE INDEX idx_stops_spatial ON _stops_staging(stop_lat, stop_lon)",
+        "CREATE INDEX idx_calendar_range ON _calendar_staging(start_date, end_date)",
+        "CREATE INDEX idx_transfers_from ON _transfers_staging(from_stop_id, min_transfer_time)",
+        "CREATE INDEX idx_srm_directional ON _stop_route_map_staging(stop_id, direction_id, route_id)",
+        "CREATE INDEX idx_active_services_date ON _active_services_staging(service_date)"
+    ]
+    for sql in index_sqls:
+        cur.execute(sql)
+
+    # ------------------------------------------------------------------
+    # ANALYZE staging tables
+    # ------------------------------------------------------------------
+    cur.execute("ANALYZE")
+
+    # ------------------------------------------------------------------
+    # Atomic swap: drop production, rename staging
+    # ------------------------------------------------------------------
+    table_names = list(tables_sql.keys())
+    cur.execute("BEGIN")
+    for tbl in table_names:
+        cur.execute(f"DROP TABLE IF EXISTS {tbl}")
+        cur.execute(f"ALTER TABLE _{tbl}_staging RENAME TO {tbl}")
+    cur.execute("COMMIT")
+
+    # ------------------------------------------------------------------
+    # Write feed_metadata (valid_from/to from calendar min/max)
+    # ------------------------------------------------------------------
+    cur.execute("SELECT MIN(start_date), MAX(end_date) FROM calendar")
+    min_d, max_d = cur.fetchone()
+    cur.execute(
+        "INSERT INTO feed_metadata (feed_id, schema_version, generated_at, valid_from, valid_to) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("lynx", 1, UNIX_NOW, min_d, max_d)
+    )
+
+    # ------------------------------------------------------------------
+    # Write source_file_versions (for future incremental runs)
+    # ------------------------------------------------------------------
+    for fname in ['routes.txt', 'stops.txt', 'shapes.txt', 'trips.txt',
+                  'stop_times.txt', 'calendar.txt', 'calendar_dates.txt']:
+        layer = 'static' if fname in ('routes.txt', 'stops.txt', 'shapes.txt') else 'volatile'
+        cur.execute(
+            "INSERT INTO source_file_versions VALUES (?, ?, ?, ?)",
+            (fname, 'hash_not_used_yet', UNIX_NOW, layer)
+        )
+
+    # ------------------------------------------------------------------
+    # service_runtime_state
+    # ------------------------------------------------------------------
+    cur.execute(
+        "INSERT INTO service_runtime_state VALUES ('primary', 1, ?, ?, NULL, ?)",
+        (UNIX_NOW, UNIX_NOW + 7*86400, UNIX_NOW)
+    )
+
+    # ------------------------------------------------------------------
+    # VACUUM and finalize
+    # ------------------------------------------------------------------
+    conn.execute("VACUUM")
+    conn.close()
+    print(f"ETL complete. Database saved to {DB_PATH}")
+
+# ----------------------------------------------------------------------
+# Entry point
+# ----------------------------------------------------------------------
+if __name__ == '__main__':
+    if len(sys.argv) != 3:
+        print("Usage: gtfs_etl.py <gtfs_zip> <output_db>")
+        sys.exit(1)
+    run_etl(sys.argv[1], sys.argv[2])
