@@ -1,0 +1,46 @@
+name: Scaffold Flutter Monorepo
+
+# This allows you to manually trigger the workflow from the GitHub Actions UI
+on:
+  workflow_dispatch:
+
+# Grants the workflow permission to push the generated files back to your repo
+permissions:
+  contents: write
+
+jobs:
+  scaffold-architecture:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Make Script Executable
+        run: chmod +x setup_repo.sh
+
+      - name: Run Scaffold Script
+        run: ./setup_repo.sh
+
+      - name: Commit and Push Generated Files
+        run: |
+          # Configure Git to commit as the GitHub Actions bot
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Stage all the newly generated files
+          git add .
+          
+          # Check if there are any changes to commit to avoid failing the workflow
+          if git diff --staged --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: scaffold LYNX Bus App modular architecture"
+            git push
+          fi
