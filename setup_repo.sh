@@ -6,11 +6,11 @@ set -e
 # Creates the full modular silo architecture.
 # ───────────────────────────────────────────────────────────
 
-PROJECT_NAME="lynx_bus_app"
+PROJECT_NAME="bus_boss_v2"
 echo "🚀 Creating $PROJECT_NAME monorepo..."
 
 # 1. Create Flutter app (root)
-flutter create --org com.lynxbus --platforms android,ios --project-name $PROJECT_NAME .
+flutter create --org com.busboss --platforms android,ios --project-name $PROJECT_NAME .
 cd $PROJECT_NAME
 
 # Clean up default test file (we'll add our own later)
