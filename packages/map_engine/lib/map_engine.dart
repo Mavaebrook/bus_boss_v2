@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:user_input/user_input.dart';
 import 'package:transit_query_engine/transit_query_engine.dart';
 import 'package:telemetry/telemetry.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:contracts/contracts.dart';
 import 'polyline_decoder.dart';
 
@@ -24,7 +25,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   LatLng? _origin;
   LatLng? _destination;
   List<LatLng> _routePoints = [];
-  LatLng _currentCenter = const LatLng(28.5383, -81.3792);
+  LatLng _currentCenter = const LatLng(28.5383, -81.3792); // Orlando fallback
 
   StreamSubscription<LocationUpdate>? _locationSub;
   final GpsService _gpsService = GpsService();
@@ -32,18 +33,32 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   void initState() {
     super.initState();
-    _gpsService.start(distanceFilterMeters: 10);
-    _locationSub = _gpsService.locationStream.listen((pos) {
-      final userLoc = LatLng(pos.lat, pos.lon);
-      final engine = ref.read(transitQueryEngineProvider);
-      final stop = engine.snapToRoute(pos.lat, pos.lon);
-      if (stop != null && mounted) {
+    _requestLocationAndStartGps();
+  }
+
+  Future<void> _requestLocationAndStartGps() async {
+    // Request runtime permission (shows system dialog)
+    final permission = await Geolocator.requestPermission();
+    if (permission == LocationPermission.whileInUse ||
+        permission == LocationPermission.always) {
+      _gpsService.start(distanceFilterMeters: 10);
+      _locationSub = _gpsService.locationStream.listen((pos) {
+        final userLoc = LatLng(pos.lat, pos.lon);
+        if (mounted) {
+          setState(() {
+            _origin = userLoc;
+            _currentCenter = userLoc;
+          });
+        }
+      });
+    } else {
+      // Permission denied – use current map centre as origin
+      if (mounted) {
         setState(() {
-          _origin = userLoc;
-          _currentCenter = userLoc;
+          _origin = _currentCenter;
         });
       }
-    });
+    }
   }
 
   @override
@@ -70,15 +85,33 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final lon = place['lon'] as double;
     final engine = ref.read(transitQueryEngineProvider);
 
+    // Snap the destination to a nearby stop
     final destStop = engine.snapToRoute(lat, lon);
-    if (destStop == null) return;
+    if (destStop == null) {
+      _showMessage('Could not find a nearby stop for this destination.');
+      return;
+    }
 
-    String originStopId = '2001';
+    // Determine the origin stop – from GPS, or snap from current map centre
+    String originStopId;
     if (_origin != null) {
-      final originStop = engine.snapToRoute(_origin!.latitude, _origin!.longitude);
+      final originStop =
+          engine.snapToRoute(_origin!.latitude, _origin!.longitude);
       if (originStop != null) {
         originStopId = originStop['stop_id']!;
+      } else {
+        _showMessage('Could not find a nearby stop at the origin.');
+        return;
       }
+    } else {
+      // Fallback to current map centre
+      final centreStop =
+          engine.snapToRoute(_currentCenter.latitude, _currentCenter.longitude);
+      if (centreStop == null) {
+        _showMessage('Could not find any stops near the map centre.');
+        return;
+      }
+      originStopId = centreStop['stop_id']!;
     }
 
     final plan = engine.getTripPlan(
@@ -86,8 +119,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       destStop['stop_id']!,
       deadline: DateTime.now().add(const Duration(hours: 2)),
     );
-    if (plan == null) return;
+    if (plan == null) {
+      _showMessage('No trip found. The service may not be running now.');
+      return;
+    }
 
+    // Decode route geometry
     final List<LatLng> fullRoute = [];
     for (final seg in plan.segments) {
       if (seg.geometryPolyline != null && seg.geometryPolyline!.isNotEmpty) {
@@ -106,6 +143,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _searchController.clear();
     });
     _showTripSummary();
+  }
+
+  void _showMessage(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(msg, style: const TextStyle(color: Colors.white)),
+        backgroundColor: const Color(0xFF1e2640),
+      ));
   }
 
   void _showTripSummary() {
