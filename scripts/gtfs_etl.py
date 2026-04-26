@@ -531,6 +531,7 @@ def run_etl(gtfs_zip_path, db_path):
     # Atomic swap: drop production, rename staging
     # ------------------------------------------------------------------
     table_names = list(tables_sql.keys())
+    conn.commit()                            # ← close any implicit transaction
     cur.execute("BEGIN")
     for tbl in table_names:
         cur.execute(f"DROP TABLE IF EXISTS {tbl}")
