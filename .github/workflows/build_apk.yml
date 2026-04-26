@@ -18,12 +18,12 @@ jobs:
         uses: dawidd6/action-download-artifact@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          workflow: gtfs_etl.yml             # the name of your ETL workflow file
+          workflow: gtfs_etl.yml
           workflow_conclusion: success
-          name: lynx-gtfs-db                 # artifact name from ETL step
-          path: assets/gtfs/                 # target folder
+          name: lynx-gtfs-db
+          path: assets/gtfs/
           check_artifacts: true
-        continue-on-error: true              # ignore if no artifact exists
+        continue-on-error: true
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
