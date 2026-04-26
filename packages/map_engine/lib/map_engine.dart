@@ -1,12 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:user_input/user_input.dart';
 import 'package:transit_query_engine/transit_query_engine.dart';
-import 'dart:convert' show jsonDecode;
+import 'package:telemetry/telemetry.dart';
+import 'package:contracts/contracts.dart';
 import 'polyline_decoder.dart';
-import 'package:contracts/contracts.dart';   // ← add this line
 
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
@@ -23,12 +24,32 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   LatLng? _origin;
   LatLng? _destination;
   List<LatLng> _routePoints = [];
+  LatLng _currentCenter = const LatLng(28.5383, -81.3792);
 
-  static const String _originStopId = '2001'; // placeholder
-  static const LatLng _orlandoCenter = LatLng(28.5383, -81.3792);
+  StreamSubscription<LocationUpdate>? _locationSub;
+  final GpsService _gpsService = GpsService();
+
+  @override
+  void initState() {
+    super.initState();
+    _gpsService.start(distanceFilterMeters: 10);
+    _locationSub = _gpsService.locationStream.listen((pos) {
+      final userLoc = LatLng(pos.lat, pos.lon);
+      final engine = ref.read(transitQueryEngineProvider);
+      final stop = engine.snapToRoute(pos.lat, pos.lon);
+      if (stop != null && mounted) {
+        setState(() {
+          _origin = userLoc;
+          _currentCenter = userLoc;
+        });
+      }
+    });
+  }
 
   @override
   void dispose() {
+    _locationSub?.cancel();
+    _gpsService.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -48,17 +69,25 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final lat = place['lat'] as double;
     final lon = place['lon'] as double;
     final engine = ref.read(transitQueryEngineProvider);
+
     final destStop = engine.snapToRoute(lat, lon);
     if (destStop == null) return;
 
+    String originStopId = '2001';
+    if (_origin != null) {
+      final originStop = engine.snapToRoute(_origin!.latitude, _origin!.longitude);
+      if (originStop != null) {
+        originStopId = originStop['stop_id']!;
+      }
+    }
+
     final plan = engine.getTripPlan(
-      _originStopId,
+      originStopId,
       destStop['stop_id']!,
       deadline: DateTime.now().add(const Duration(hours: 2)),
     );
     if (plan == null) return;
 
-    // Fetch shapes for each segment
     final List<LatLng> fullRoute = [];
     for (final seg in plan.segments) {
       if (seg.geometryPolyline != null && seg.geometryPolyline!.isNotEmpty) {
@@ -75,10 +104,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       _routePoints = fullRoute;
       _searchResults = [];
       _searchController.clear();
-      _origin = _orlandoCenter; // temporary
     });
-
-    // Show trip summary
     _showTripSummary();
   }
 
@@ -154,13 +180,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Widget build(BuildContext context) {
     final map = FlutterMap(
       options: MapOptions(
-        initialCenter: _orlandoCenter,
+        initialCenter: _currentCenter,
         initialZoom: 13.2,
       ),
       children: [
         TileLayer(
           urlTemplate:
-              'https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}{r}.png',
+              'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
           userAgentPackageName: 'com.busboss.bus_boss_v2',
         ),
         if (_routePoints.isNotEmpty)
@@ -174,8 +200,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           MarkerLayer(markers: [
             Marker(
                 point: _origin!,
-                child: const Icon(Icons.trip_origin,
-                    color: Colors.green, size: 32))
+                child: const Icon(Icons.my_location,
+                    color: Colors.blue, size: 28))
           ]),
         if (_destination != null)
           MarkerLayer(markers: [
