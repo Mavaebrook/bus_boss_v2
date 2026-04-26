@@ -11,12 +11,13 @@ dependencies:
     sdk: flutter
   contracts:
     path: ../contracts
+  transit_realtime:
+    path: ../transit_realtime
+  sqlite3: ^2.4.0
   riverpod: ^2.5.1
   rxdart: ^0.27.7
   equatable: ^2.0.5
+  collection: ^1.18.0
 
 dev_dependencies:
   flutter_lints: ^3.0.0
-  drift: ^2.15.0
-  sqlite3: ^2.4.0
-  path_provider: ^2.1.0
