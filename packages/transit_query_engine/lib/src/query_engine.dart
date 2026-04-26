@@ -40,23 +40,27 @@ class TransitQueryEngine {
   // Snap to nearest stop
   // -------------------------------------------------------------------------
   Map<String, String>? snapToRoute(double lat, double lon) {
-    final db = sqlite3.sqlite3.open(dbPath);
-    final row = db.select(
-      '''SELECT s.stop_id, t.trip_id, t.shape_id
-         FROM stop_times st
-         JOIN trips t ON st.trip_id = t.trip_id
-         JOIN stops s ON st.stop_id = s.stop_id
-         ORDER BY ((s.stop_lat - ?)*(s.stop_lat - ?) + (s.stop_lon - ?)*(s.stop_lon - ?))
-         LIMIT 1''',
-      [lat, lat, lon, lon],
-    );
-    db.dispose();
-    if (row.isEmpty) return null;
-    return {
-      'stop_id': row.first.columnAt(0) as String,
-      'trip_id': row.first.columnAt(1) as String,
-      'shape_id': row.first.columnAt(2) as String,
-    };
+  print('🔍 snapToRoute($lat, $lon)  dbPath=$dbPath');
+  final db = sqlite3.sqlite3.open(dbPath);
+  final row = db.select(
+    '''SELECT s.stop_id, t.trip_id, t.shape_id
+       FROM stop_times st
+       JOIN trips t ON st.trip_id = t.trip_id
+       JOIN stops s ON st.stop_id = s.stop_id
+       ORDER BY ((s.stop_lat - ?)*(s.stop_lat - ?) + (s.stop_lon - ?)*(s.stop_lon - ?))
+       LIMIT 1''',
+    [lat, lat, lon, lon],
+  );
+  db.dispose();
+  print('🔍 snapToRoute query returned ${row.length} rows');
+  if (row.isEmpty) return null;
+  final result = {
+    'stop_id': row.first.columnAt(0) as String,
+    'trip_id': row.first.columnAt(1) as String,
+    'shape_id': row.first.columnAt(2) as String,
+  };
+  print('🔍 snapToRoute result: $result');
+  return result;
   }
 
   // -------------------------------------------------------------------------
