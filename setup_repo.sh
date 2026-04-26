@@ -3,23 +3,24 @@ set -e
 
 # ───────────────────────────────────────────────────────────
 # LYNX Bus Routing App – Repository Scaffold Generator
-# Creates the full modular silo architecture.
+# Creates the full modular silo architecture inside an
+# existing GitHub repository.
 # ───────────────────────────────────────────────────────────
 
 PROJECT_NAME="bus_boss_v2"
-echo "🚀 Creating $PROJECT_NAME monorepo..."
+echo "🚀 Scaffolding $PROJECT_NAME monorepo..."
 
-# 1. Create Flutter app (root)
+# 1. Create Flutter project in the current directory (repo root)
 flutter create --org com.busboss --platforms android,ios --project-name $PROJECT_NAME .
-cd $PROJECT_NAME
+echo "Flutter project created in $(pwd)"
 
-# Clean up default test file (we'll add our own later)
+# Remove default test file (we'll add our own later)
 rm -f test/widget_test.dart
 
 # 2. Create top-level directories
-mkdir -p packages
+mkdir -p packages assets/images assets/gtfs
 
-# 3. Create .gitignore with Dart/Flutter defaults + DB/SQLite
+# 3. Ensure .gitignore is up to date
 cat > .gitignore <<'EOF'
 # Flutter/Dart
 .dart_tool/
@@ -30,13 +31,16 @@ build/
 .vscode/
 .idea/
 
-# Database
+# Database files
 *.db
 *.sqlite
 *.sqlite3
 
 # ETL artifacts
 data/
+
+# macOS
+.macos/
 EOF
 
 # ───────────────────────────────────────────────────────────
@@ -46,8 +50,9 @@ echo "📦 Creating contracts package..."
 cd packages
 dart create -t package contracts
 cd contracts
-rm -rf test # we'll add if needed
+rm -rf test
 mkdir -p lib
+
 cat > pubspec.yaml <<'YAML'
 name: contracts
 description: Shared data models and event definitions for the LYNX Bus Routing system.
@@ -69,7 +74,7 @@ dev_dependencies:
   json_serializable: ^6.7.1
 YAML
 
-# Create placeholder contract files
+# Create contract files
 cat > lib/contracts.dart <<'DART'
 export 'trip_request.dart';
 export 'trip_plan.dart';
@@ -78,7 +83,6 @@ export 'route_graph.dart';
 export 'events.dart';
 DART
 
-# trip_request.dart
 cat > lib/trip_request.dart <<'DART'
 import 'package:equatable/equatable.dart';
 import 'package:json_annotation/json_annotation.dart';
@@ -91,7 +95,7 @@ class TripRequest extends Equatable {
   final double destinationLon;
   final String? address;
   final DateTime? desiredArrivalTime;
-  final String mode; // e.g. 'bus', 'walk', 'mixed'
+  final String mode;
 
   const TripRequest({
     required this.destinationLat,
@@ -109,7 +113,6 @@ class TripRequest extends Equatable {
 }
 DART
 
-# trip_plan.dart
 cat > lib/trip_plan.dart <<'DART'
 import 'package:equatable/equatable.dart';
 import 'package:contracts/route_graph.dart';
@@ -134,7 +137,6 @@ class TripPlan extends Equatable {
 }
 DART
 
-# route_graph.dart
 cat > lib/route_graph.dart <<'DART'
 import 'package:equatable/equatable.dart';
 
@@ -164,13 +166,12 @@ class RouteSegment extends Equatable {
 }
 DART
 
-# risk_assessment.dart
 cat > lib/risk_assessment.dart <<'DART'
 import 'package:equatable/equatable.dart';
 
 class RiskAssessment extends Equatable {
   final double probabilityOfFailure;
-  final String? recommendedAction; // 'continue', 'reroute', 'wait'
+  final String? recommendedAction;
   final String? explanation;
 
   const RiskAssessment({
@@ -184,11 +185,9 @@ class RiskAssessment extends Equatable {
 }
 DART
 
-# events.dart
 cat > lib/events.dart <<'DART'
 import 'package:equatable/equatable.dart';
 
-// Domain events shared across silos
 class LocationUpdate extends Equatable {
   final double lat;
   final double lon;
@@ -209,7 +208,7 @@ class LocationUpdate extends Equatable {
 }
 
 class TripIntent extends Equatable {
-  final String source; // e.g. 'calendar', 'saved_place', 'commute'
+  final String source;
   final double destinationLat;
   final double destinationLon;
   final String? address;
@@ -248,10 +247,10 @@ class RiskLevelChanged extends Equatable {
 }
 DART
 
-cd ../..   # back to packages/
+cd ../..   # back to repo root
 
 # ───────────────────────────────────────────────────────────
-# 5. Create all silo packages (each as a Dart package)
+# 5. Create all silo packages
 # ───────────────────────────────────────────────────────────
 SILOS=(
   "telemetry"
@@ -271,13 +270,13 @@ SILOS=(
   "map_engine"
 )
 
+cd packages
 for silo in "${SILOS[@]}"; do
   echo "📦 Creating $silo package..."
   dart create -t package "$silo" --force
   cd "$silo"
   rm -rf test
 
-  # Overwrite pubspec.yaml with custom dependencies
   cat > pubspec.yaml <<YAML
 name: $silo
 description: $silo silo for the LYNX Bus Routing system.
@@ -342,7 +341,6 @@ YAML
       ;;
   esac
 
-  # Create a minimal lib/silo.dart
   cat > lib/${silo}.dart <<DART
 /// $silo silo – implementation placeholder.
 ///
@@ -358,8 +356,7 @@ DART
 
   cd ..
 done
-
-cd ..   # back to project root
+cd ..   # back to repo root
 
 # ───────────────────────────────────────────────────────────
 # 6. Update main app pubspec.yaml
@@ -408,7 +405,6 @@ dependencies:
     path: packages/ui_shell
   map_engine:
     path: packages/map_engine
-  # Global UI/state dependencies
   flutter_riverpod: ^2.5.1
   rxdart: ^0.27.7
 
@@ -423,14 +419,12 @@ flutter:
 
   assets:
     - assets/images/
-    - assets/gtfs/   # Placeholder for pre-loaded GTFS db if needed
+    - assets/gtfs/
 YAML
 
 # ───────────────────────────────────────────────────────────
-# 7. Prepare the main app entry point
+# 7. Prepare main app entry point
 # ───────────────────────────────────────────────────────────
-mkdir -p assets/images assets/gtfs
-
 cat > lib/main.dart <<'DART'
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -459,7 +453,7 @@ class LYNXBusApp extends StatelessWidget {
 DART
 
 # ───────────────────────────────────────────────────────────
-# 8. README.md
+# 8. Update README
 # ───────────────────────────────────────────────────────────
 cat > README.md <<'EOF'
 # LYNX Bus Routing App
@@ -470,19 +464,20 @@ Modular, offline-first transit app with risk-aware routing and a sarcastic "Bus 
 
 - `packages/` – domain silos as independent Dart packages
 - `packages/contracts` – shared data models and events
+- `scripts/gtfs_etl.py` – LYNX GTFS processing pipeline
+- `.github/workflows/` – CI/CD workflows
 
 ### Getting Started
 
 1. Install Flutter ≥3.16
-2. `cd lynx_bus_app`
+2. Clone this repo
 3. `flutter pub get`
 4. Run with `flutter run`
 
-The app requires a pre-built GTFS database placed in `assets/gtfs/`.
+The app requires a pre-built GTFS database (produced by the ETL script) placed in `assets/gtfs/`.
 EOF
 
 echo ""
 echo "✅ Repository scaffold complete!"
-echo "   cd $PROJECT_NAME"
 echo "   flutter pub get"
 echo "   flutter run"
