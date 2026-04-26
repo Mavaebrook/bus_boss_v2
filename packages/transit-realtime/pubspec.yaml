@@ -1,0 +1,20 @@
+name: transit_realtime
+description: GTFS-RT polling and prediction cache for the LYNX Bus Routing system.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  contracts:
+    path: ../contracts
+  protobuf: ^3.1.0
+  http: ^1.2.1
+  riverpod: ^2.5.1
+  rxdart: ^0.27.7
+
+dev_dependencies:
+  flutter_lints: ^3.0.0
