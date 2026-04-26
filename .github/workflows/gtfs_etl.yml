@@ -23,7 +23,7 @@ jobs:
       - name: Download GTFS feed
         run: |
           mkdir -p data
-          curl -L -o data/gtfs.zip "https://www.golynx.com/gtfs/gtfs.zip"
+          curl -L -o data/gtfs.zip "http://gtfsrt.golynx.com/gtfsrt/google_transit.zip"
       - name: Run ETL pipeline
         run: python scripts/gtfs_etl.py data/gtfs.zip data/gtfs.db
 
