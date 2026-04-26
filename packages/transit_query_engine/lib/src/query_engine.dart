@@ -1,4 +1,4 @@
-import 'dart:collection';
+import 'package:collection/collection.dart';   // for PriorityQueue
 import 'package:sqlite3/sqlite3.dart' as sqlite3;
 import 'package:contracts/contracts.dart';
 import 'package:transit_realtime/transit_realtime.dart';
@@ -91,7 +91,6 @@ class TransitQueryEngine {
     while (queue.isNotEmpty) {
       final state = queue.removeFirst();
 
-      // Early arrival at destination within deadline
       if (state.stopId == toStopId &&
           state.time <= _dateTimeToSeconds(deadline)) {
         final segments = _buildSegments(db, state.path, state.time, deadline);
@@ -122,7 +121,6 @@ class TransitQueryEngine {
         final tripId = departure['trip_id'] as String;
         final depTime = departure['departure_time_seconds'] as int;
 
-        // Try alight at every stop later in the trip
         final stopsOnTrip = _getStopsOnTrip(db, tripId, departure['stop_sequence'] as int);
         for (final stopEntry in stopsOnTrip) {
           final nextStopId = stopEntry['stop_id'] as String;
@@ -131,7 +129,7 @@ class TransitQueryEngine {
 
           final newPath = [...state.path, _PathSegment.trip(tripId, route.routeId, state.stopId, nextStopId)];
           final newTime = arrTime;
-          final newTransfers = state.transfers; // boarding is not a transfer
+          final newTransfers = state.transfers;
           final newWalkDist = state.walkDist;
 
           final prev = best[nextStopId];
@@ -167,10 +165,10 @@ class TransitQueryEngine {
   }
 
   // -------------------------------------------------------------------------
-  // Database queries
+  // Database queries (all now accept sqlite3.Database)
   // -------------------------------------------------------------------------
   List<_RouteInfo> _getRoutesFromStop(
-      sqlite3.Sqlite3 db, String stopId, Map<String, List<_RouteInfo>> cache) {
+      sqlite3.Database db, String stopId, Map<String, List<_RouteInfo>> cache) {
     if (cache.containsKey(stopId)) return cache[stopId]!;
     final rows = db.select(
       '''SELECT srm.route_id, srm.direction_id, t.service_id,
@@ -195,7 +193,7 @@ class TransitQueryEngine {
   }
 
   Map<String, dynamic>? _getNextDeparture(
-    sqlite3.Sqlite3 db,
+    sqlite3.Database db,
     String stopId,
     String routeId,
     int directionId,
@@ -220,7 +218,7 @@ class TransitQueryEngine {
   }
 
   List<Map<String, dynamic>> _getStopsOnTrip(
-    sqlite3.Sqlite3 db,
+    sqlite3.Database db,
     String tripId,
     int afterSequence,
   ) {
@@ -240,7 +238,7 @@ class TransitQueryEngine {
   }
 
   List<_Transfer> _getTransfersFromStop(
-      sqlite3.Sqlite3 db, String stopId, Map<String, List<_Transfer>> cache) {
+      sqlite3.Database db, String stopId, Map<String, List<_Transfer>> cache) {
     if (cache.containsKey(stopId)) return cache[stopId]!;
     final rows = db.select(
       '''SELECT to_stop_id, min_transfer_time
@@ -263,7 +261,7 @@ class TransitQueryEngine {
   // Build final route segments with shape polylines
   // -------------------------------------------------------------------------
   List<RouteSegment> _buildSegments(
-      sqlite3.Sqlite3 db, List<_PathSegment> path, int endTime, DateTime day) {
+      sqlite3.Database db, List<_PathSegment> path, int endTime, DateTime day) {
     final segments = <RouteSegment>[];
 
     for (final p in path) {
@@ -271,7 +269,7 @@ class TransitQueryEngine {
         segments.add(RouteSegment(
           fromStopId: p.fromStop,
           toStopId: p.toStop,
-          departureSeconds: 0, // will be computed from context
+          departureSeconds: 0,
           arrivalSeconds: 0,
           routeId: 'walk',
           tripId: 'walk',
@@ -279,7 +277,6 @@ class TransitQueryEngine {
           geometryPolyline: null,
         ));
       } else if (p.type == 'trip') {
-        // Get shape polyline for this trip
         String? polyline;
         final shapeRows = db.select(
           '''SELECT tg.encoded_polyline
@@ -292,7 +289,6 @@ class TransitQueryEngine {
           polyline = shapeRows.first.columnAt(0) as String?;
         }
 
-        // Determine departure/arrival at the from/to stops for this segment
         final stopTimesRows = db.select(
           '''SELECT stop_id, departure_time_seconds, arrival_time_seconds
              FROM stop_times
@@ -316,7 +312,7 @@ class TransitQueryEngine {
           arrivalSeconds: arrSec,
           routeId: p.routeId ?? '',
           tripId: p.tripId ?? '',
-          directionId: 0, // can be fetched but not strictly needed
+          directionId: 0,
           geometryPolyline: polyline,
         ));
       }
@@ -326,30 +322,21 @@ class TransitQueryEngine {
 }
 
 // ---------------------------------------------------------------------------
-// Internal helper classes
+// Internal helper classes (unchanged)
 // ---------------------------------------------------------------------------
 class _RouteInfo {
   final String routeId;
   final int directionId;
   final String serviceId;
   final int stopSequence;
-  _RouteInfo({
-    required this.routeId,
-    required this.directionId,
-    required this.serviceId,
-    required this.stopSequence,
-  });
+  _RouteInfo({required this.routeId, required this.directionId, required this.serviceId, required this.stopSequence});
 }
 
 class _Transfer {
   final String toStopId;
   final int walkTimeSeconds;
   final double walkDistMeters;
-  _Transfer({
-    required this.toStopId,
-    required this.walkTimeSeconds,
-    required this.walkDistMeters,
-  });
+  _Transfer({required this.toStopId, required this.walkTimeSeconds, required this.walkDistMeters});
 }
 
 class _State {
@@ -362,19 +349,16 @@ class _State {
 }
 
 class _PathSegment {
-  final String type; // 'trip' or 'walk'
+  final String type;
   final String? tripId;
   final String? routeId;
   final String fromStop;
   final String toStop;
   final double? walkDistMeters;
   _PathSegment.trip(this.tripId, this.routeId, this.fromStop, this.toStop)
-      : type = 'trip',
-        walkDistMeters = null;
+      : type = 'trip', walkDistMeters = null;
   _PathSegment.walk(this.fromStop, this.toStop, this.walkDistMeters)
-      : type = 'walk',
-        tripId = null,
-        routeId = null;
+      : type = 'walk', tripId = null, routeId = null;
 }
 
 class _BestCost {
