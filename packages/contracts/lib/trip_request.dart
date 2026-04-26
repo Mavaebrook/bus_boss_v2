@@ -1,9 +1,5 @@
 import 'package:equatable/equatable.dart';
-import 'package:json_annotation/json_annotation.dart';
 
-part 'trip_request.g.dart';
-
-@JsonSerializable()
 class TripRequest extends Equatable {
   final double destinationLat;
   final double destinationLon;
@@ -21,7 +17,4 @@ class TripRequest extends Equatable {
 
   @override
   List<Object?> get props => [destinationLat, destinationLon, address, desiredArrivalTime, mode];
-
-  factory TripRequest.fromJson(Map<String, dynamic> json) => _$TripRequestFromJson(json);
-  Map<String, dynamic> toJson() => _$TripRequestToJson(this);
 }
