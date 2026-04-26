@@ -1,4 +1,12 @@
 # Generated GTFS database
-data/gtfs.db
+.dart_tool/
+.packages
+build/
+*.iml
+*.lock
+.vscode/
+.idea/
 *.db
 *.sqlite
+*.sqlite3
+data/
