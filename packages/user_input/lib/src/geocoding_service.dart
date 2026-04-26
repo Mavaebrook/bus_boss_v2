@@ -13,15 +13,11 @@ class GeocodingService {
           'limit': '5',
         },
       );
-      print('🔍 Searching: $uri');
       final response = await http.get(uri, headers: {
-        'User-Agent': 'bus_boss_v2/1.0 (android; test@example.com)',
+        'User-Agent': 'bus_boss_v2/1.0 (Android; Mavaebrook; github.com/Mavaebrook/bus_boss_v2)',
       });
-      print('📡 Status: ${response.statusCode}');
-      print('📡 Body preview: ${response.body.substring(0, response.body.length.clamp(0, 200))}');
       if (response.statusCode == 200) {
         final List data = json.decode(response.body);
-        print('✅ Parsed ${data.length} results');
         return data
             .map((e) => {
                   'lat': double.parse(e['lat']),
@@ -30,10 +26,11 @@ class GeocodingService {
                 })
             .toList();
       } else {
+        print('Nominatim error ${response.statusCode}: ${response.body}');
         return [];
       }
     } catch (e) {
-      print('❌ Geocoding error: $e');
+      print('Geocoding error: $e');
       return [];
     }
   }
