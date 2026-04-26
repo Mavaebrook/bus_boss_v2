@@ -41,6 +41,8 @@ dependencies:
     path: packages/ui_shell
   map_engine:
     path: packages/map_engine
+    transit_realtime:
+  path: packages/transit_realtime
   flutter_riverpod: ^2.5.1
   rxdart: ^0.27.7
 
