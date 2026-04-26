@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:transit_etl/transit_etl.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite3;
+import 'package:transit_query_engine/transit_query_engine.dart';  // ← new import
 import 'package:ui_shell/ui_shell.dart';
 import 'dart:io';
 
@@ -18,9 +19,10 @@ void main() async {
   // -------------------------------------------------------------------------
   // STALE FEED CHECK + AUTO REFRESH
   // -------------------------------------------------------------------------
+  String dbPath;   // will be set inside the try‑block
   try {
     final dbDir = await getApplicationDocumentsDirectory();
-    final dbPath = '${dbDir.path}/gtfs.db';
+    dbPath = '${dbDir.path}/gtfs.db';
     final dbFile = File(dbPath);
 
     // Determine if we need a fresh database
@@ -63,12 +65,22 @@ void main() async {
       }
     }
   } catch (e) {
+    // If the feed check fails, we still need a value for dbPath.
+    // Fallback to a known location (the app directory).
+    final dbDir = await getApplicationDocumentsDirectory();
+    dbPath = '${dbDir.path}/gtfs.db';
     debugPrint('Feed check/download failed: $e');
-    // App continues normally even if the check fails
   }
   // -------------------------------------------------------------------------
 
-  runApp(const ProviderScope(child: LYNXBusApp()));
+  runApp(
+    ProviderScope(
+      overrides: [
+        databasePathProvider.overrideWithValue(dbPath),
+      ],
+      child: const LYNXBusApp(),
+    ),
+  );
 }
 
 class LYNXBusApp extends StatelessWidget {
