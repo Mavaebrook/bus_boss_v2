@@ -9,7 +9,9 @@ class TransitQueryEngine {
 
   TransitQueryEngine({required this.dbPath, this.predictionCache});
 
-  /// Get all active service IDs for a given date (YYYYMMDD).
+  // -------------------------------------------------------------------------
+  // Date helpers
+  // -------------------------------------------------------------------------
   List<String> getActiveServiceIds(int date) {
     final db = sqlite3.sqlite3.open(dbPath);
     final rows = db.select(
@@ -20,11 +22,23 @@ class TransitQueryEngine {
     return rows.map((r) => r.columnAt(0) as String).toList();
   }
 
-  /// Convert DateTime to YYYYMMDD integer.
   int _dateToInt(DateTime d) =>
       d.year * 10000 + d.month * 100 + d.day;
 
-  /// Snap a location to the nearest stop. Returns stop_id.
+  int _dateTimeToSeconds(DateTime dt) =>
+      dt.hour * 3600 + dt.minute * 60 + dt.second;
+
+  DateTime _secondsToDateTime(int secs, DateTime day) {
+    final hours = secs ~/ 3600;
+    final mins = (secs % 3600) ~/ 60;
+    final sec = secs % 60;
+    return DateTime(day.year, day.month, day.day, hours % 24, mins, sec)
+        .add(Duration(days: hours ~/ 24));
+  }
+
+  // -------------------------------------------------------------------------
+  // Snap to nearest stop
+  // -------------------------------------------------------------------------
   Map<String, String>? snapToRoute(double lat, double lon) {
     final db = sqlite3.sqlite3.open(dbPath);
     final row = db.select(
@@ -61,132 +75,105 @@ class TransitQueryEngine {
     final tripDate = _dateToInt(deadline);
     final activeServices = getActiveServiceIds(tripDate).toSet();
 
-    // Cache for service IDs to avoid repeated lookups
     final stopRouteMap = <String, List<_RouteInfo>>{};
     final transferMap = <String, List<_Transfer>>{};
 
-    // Load stop_route_map entries for all stops (lazy load later)
-    // Load transfers
-
-    // Priority queue: (current time, stop_id, path, transfer count, walk dist)
-    // The time is the current arrival time at this stop.
     final queue = PriorityQueue<_State>((a, b) => a.time.compareTo(b.time));
     final best = <String, _BestCost>{};
 
-    // Forward search from origin at earliest departure (default to 10 min from now if null)
     final startTime = earliestDeparture ??
         DateTime.now().add(const Duration(minutes: 10));
-    final startSeconds = startTime.hour * 3600 +
-        startTime.minute * 60 +
-        startTime.second;
+    final startSeconds = _dateTimeToSeconds(startTime);
 
     queue.add(_State(fromStopId, startSeconds, [], 0, 0));
     best[fromStopId] = _BestCost(startSeconds, 0, 0);
 
     while (queue.isNotEmpty) {
       final state = queue.removeFirst();
-      if (state.stopId == toStopId && state.time <= _dateTimeToSeconds(deadline)) {
-        // Found a valid plan
-        final segments = _buildSegments(db, state.path, state.time);
-        final walkDist = state.walkDist;
-        final transfers = state.transfers;
+
+      // Early arrival at destination within deadline
+      if (state.stopId == toStopId &&
+          state.time <= _dateTimeToSeconds(deadline)) {
+        final segments = _buildSegments(db, state.path, state.time, deadline);
+        db.dispose();
         return TripPlan(
           segments: segments,
           departureTime: _secondsToDateTime(startSeconds, deadline),
           arrivalTime: _secondsToDateTime(state.time, deadline),
-          walkDistanceMeters: walkDist,
-          transferCount: transfers,
+          walkDistanceMeters: state.walkDist,
+          transferCount: state.transfers,
         );
       }
 
-      // 1. Board a trip from this stop
+      // 1. Board a trip from current stop
       final routes = _getRoutesFromStop(db, state.stopId, stopRouteMap);
       for (final route in routes) {
-        // Only consider trips active today
         if (!activeServices.contains(route.serviceId)) continue;
 
-        // Find the next departure of this route after current time
-        final nextDeparture = _getNextDeparture(
+        final departure = _getNextDeparture(
           db,
           state.stopId,
           route.routeId,
           route.directionId,
           state.time,
         );
-        if (nextDeparture == null) continue;
+        if (departure == null) continue;
 
-        final tripId = nextDeparture['trip_id'] as String;
-        final depTime = nextDeparture['departure_time_seconds'] as int;
-        final arrAtDest = _getArrivalAtStop(
-          db,
-          tripId,
-          toStopId,
-          route.stopSequence,
-        );
-        if (arrAtDest != null && arrAtDest <= _dateTimeToSeconds(deadline)) {
-          final newTime = arrAtDest;
-          final newPath = [...state.path, _PathSegment.trip(tripId, route.routeId, state.stopId, toStopId)];
-          final newCost = newTime;
-          final newTransfers = state.transfers;
+        final tripId = departure['trip_id'] as String;
+        final depTime = departure['departure_time_seconds'] as int;
 
-          // Check if we already reached this stop with a better or equal time and fewer transfers
-          final prev = best[toStopId];
+        // Try alight at every stop later in the trip
+        final stopsOnTrip = _getStopsOnTrip(db, tripId, departure['stop_sequence'] as int);
+        for (final stopEntry in stopsOnTrip) {
+          final nextStopId = stopEntry['stop_id'] as String;
+          final arrTime = stopEntry['arrival_time_seconds'] as int;
+          if (arrTime > _dateTimeToSeconds(deadline)) continue;
+
+          final newPath = [...state.path, _PathSegment.trip(tripId, route.routeId, state.stopId, nextStopId)];
+          final newTime = arrTime;
+          final newTransfers = state.transfers; // boarding is not a transfer
+          final newWalkDist = state.walkDist;
+
+          final prev = best[nextStopId];
           if (prev == null || newTime < prev.time || (newTime == prev.time && newTransfers < prev.transfers)) {
-            best[toStopId] = _BestCost(newTime, newTransfers, state.walkDist);
-            queue.add(_State(toStopId, newTime, newPath, newTransfers, state.walkDist));
+            best[nextStopId] = _BestCost(newTime, newTransfers, newWalkDist);
+            queue.add(_State(nextStopId, newTime, newPath, newTransfers, newWalkDist));
           }
         }
-        // Otherwise, get off at every stop and continue search...
-        // This simplified version only checks direct trips to destination.
-        // A full implementation would board the trip, alight at each subsequent stop, and queue those.
-        // For brevity, we'll expand with trip segments below.
       }
 
-      // 2. Walk to a nearby stop (transfer)
+      // 2. Walk to nearby stops
       final transfers = _getTransfersFromStop(db, state.stopId, transferMap);
-      for (final transfer in transfers) {
-        if (transfer.walkTimeSeconds > maxWalkMeters / 1.2) continue;
-        if (wheelchairAccessible && !transfer.wheelchairAccessible) continue; // (if data available)
-        final newTime = state.time + transfer.walkTimeSeconds;
+      for (final t in transfers) {
+        if (t.walkTimeSeconds > maxWalkMeters / 1.2) continue;
+        final newTime = state.time + t.walkTimeSeconds;
         if (newTime > _dateTimeToSeconds(deadline)) continue;
-        final nextStop = transfer.toStopId;
+        final nextStop = t.toStopId;
         final newTransfers = state.transfers + 1;
         if (newTransfers > maxTransfers) continue;
-        final newWalkDist = state.walkDist + transfer.walkDistMeters;
+        final newWalkDist = state.walkDist + t.walkDistMeters;
 
         final prev = best[nextStop];
         if (prev == null || newTime < prev.time || (newTime == prev.time && newTransfers < prev.transfers)) {
           best[nextStop] = _BestCost(newTime, newTransfers, newWalkDist);
-          final newPath = [...state.path, _PathSegment.walk(state.stopId, nextStop, transfer.walkDistMeters)];
+          final newPath = [...state.path, _PathSegment.walk(state.stopId, nextStop, t.walkDistMeters)];
           queue.add(_State(nextStop, newTime, newPath, newTransfers, newWalkDist));
         }
       }
     }
 
     db.dispose();
-    return null; // No route found
+    return null;
   }
 
   // -------------------------------------------------------------------------
-  // Internal helpers
+  // Database queries
   // -------------------------------------------------------------------------
-  int _dateTimeToSeconds(DateTime dt) =>
-      dt.hour * 3600 + dt.minute * 60 + dt.second;
-
-  DateTime _secondsToDateTime(int secs, DateTime day) {
-    // Handles >24h times: we assume the seconds are from midnight on the given day.
-    final hours = secs ~/ 3600;
-    final mins = (secs % 3600) ~/ 60;
-    final sec = secs % 60;
-    return DateTime(day.year, day.month, day.day, hours % 24, mins, sec)
-        .add(Duration(days: hours ~/ 24));
-  }
-
   List<_RouteInfo> _getRoutesFromStop(
       sqlite3.Sqlite3 db, String stopId, Map<String, List<_RouteInfo>> cache) {
     if (cache.containsKey(stopId)) return cache[stopId]!;
     final rows = db.select(
-      '''SELECT srm.route_id, srm.direction_id, t.service_id, 
+      '''SELECT srm.route_id, srm.direction_id, t.service_id,
          MIN(st.stop_sequence) as first_sequence
          FROM stop_route_map srm
          JOIN trips t ON srm.route_id = t.route_id AND srm.direction_id = t.direction_id
@@ -195,12 +182,14 @@ class TransitQueryEngine {
          GROUP BY srm.route_id, srm.direction_id, t.service_id''',
       [stopId],
     );
-    final list = rows.map((r) => _RouteInfo(
-          routeId: r.columnAt(0) as String,
-          directionId: r.columnAt(1) as int,
-          serviceId: r.columnAt(2) as String,
-          stopSequence: r.columnAt(3) as int,
-        )).toList();
+    final list = rows
+        .map((r) => _RouteInfo(
+              routeId: r.columnAt(0) as String,
+              directionId: r.columnAt(1) as int,
+              serviceId: r.columnAt(2) as String,
+              stopSequence: r.columnAt(3) as int,
+            ))
+        .toList();
     cache[stopId] = list;
     return list;
   }
@@ -212,7 +201,6 @@ class TransitQueryEngine {
     int directionId,
     int afterSeconds,
   ) {
-    // Use index idx_st_departure (stop_id, departure_time_seconds)
     final rows = db.select(
       '''SELECT st.trip_id, st.departure_time_seconds, st.stop_sequence
          FROM stop_times st
@@ -231,24 +219,24 @@ class TransitQueryEngine {
     };
   }
 
-  int? _getArrivalAtStop(
+  List<Map<String, dynamic>> _getStopsOnTrip(
     sqlite3.Sqlite3 db,
     String tripId,
-    String stopId,
-    int originStopSequence,
+    int afterSequence,
   ) {
-    // Use index idx_st_trip (trip_id, stop_sequence)
     final rows = db.select(
-      '''SELECT arrival_time_seconds
+      '''SELECT stop_id, arrival_time_seconds
          FROM stop_times
-         WHERE trip_id = ? AND stop_id = ?
-           AND stop_sequence > ?
-         ORDER BY stop_sequence
-         LIMIT 1''',
-      [tripId, stopId, originStopSequence],
+         WHERE trip_id = ? AND stop_sequence > ?
+         ORDER BY stop_sequence''',
+      [tripId, afterSequence],
     );
-    if (rows.isEmpty) return null;
-    return rows.first.columnAt(0) as int;
+    return rows
+        .map((r) => {
+              'stop_id': r.columnAt(0) as String,
+              'arrival_time_seconds': r.columnAt(1) as int,
+            })
+        .toList();
   }
 
   List<_Transfer> _getTransfersFromStop(
@@ -260,36 +248,108 @@ class TransitQueryEngine {
          WHERE from_stop_id = ?''',
       [stopId],
     );
-    final list = rows.map((r) => _Transfer(
-          toStopId: r.columnAt(0) as String,
-          walkTimeSeconds: r.columnAt(1) as int,
-          walkDistMeters: (r.columnAt(1) as int) * 1.2, // approximate
-        )).toList();
+    final list = rows
+        .map((r) => _Transfer(
+              toStopId: r.columnAt(0) as String,
+              walkTimeSeconds: r.columnAt(1) as int,
+              walkDistMeters: (r.columnAt(1) as int) * 1.2,
+            ))
+        .toList();
     cache[stopId] = list;
     return list;
   }
 
+  // -------------------------------------------------------------------------
+  // Build final route segments with shape polylines
+  // -------------------------------------------------------------------------
   List<RouteSegment> _buildSegments(
-      sqlite3.Sqlite3 db, List<_PathSegment> path, int endTime) {
-    // For simplicity, return an empty list for now.
-    return [];
+      sqlite3.Sqlite3 db, List<_PathSegment> path, int endTime, DateTime day) {
+    final segments = <RouteSegment>[];
+
+    for (final p in path) {
+      if (p.type == 'walk') {
+        segments.add(RouteSegment(
+          fromStopId: p.fromStop,
+          toStopId: p.toStop,
+          departureSeconds: 0, // will be computed from context
+          arrivalSeconds: 0,
+          routeId: 'walk',
+          tripId: 'walk',
+          directionId: 0,
+          geometryPolyline: null,
+        ));
+      } else if (p.type == 'trip') {
+        // Get shape polyline for this trip
+        String? polyline;
+        final shapeRows = db.select(
+          '''SELECT tg.encoded_polyline
+             FROM trip_geometry tg
+             JOIN trips t ON tg.shape_id = t.shape_id
+             WHERE t.trip_id = ?''',
+          [p.tripId],
+        );
+        if (shapeRows.isNotEmpty) {
+          polyline = shapeRows.first.columnAt(0) as String?;
+        }
+
+        // Determine departure/arrival at the from/to stops for this segment
+        final stopTimesRows = db.select(
+          '''SELECT stop_id, departure_time_seconds, arrival_time_seconds
+             FROM stop_times
+             WHERE trip_id = ? AND stop_id IN (?, ?)
+             ORDER BY stop_sequence''',
+          [p.tripId, p.fromStop, p.toStop],
+        );
+        int depSec = 0, arrSec = 0;
+        for (final r in stopTimesRows) {
+          final sid = r.columnAt(0) as String;
+          final dep = r.columnAt(1) as int;
+          final arr = r.columnAt(2) as int;
+          if (sid == p.fromStop) depSec = dep;
+          if (sid == p.toStop) arrSec = arr;
+        }
+
+        segments.add(RouteSegment(
+          fromStopId: p.fromStop,
+          toStopId: p.toStop,
+          departureSeconds: depSec,
+          arrivalSeconds: arrSec,
+          routeId: p.routeId ?? '',
+          tripId: p.tripId ?? '',
+          directionId: 0, // can be fetched but not strictly needed
+          geometryPolyline: polyline,
+        ));
+      }
+    }
+    return segments;
   }
 }
 
-// Internal classes
+// ---------------------------------------------------------------------------
+// Internal helper classes
+// ---------------------------------------------------------------------------
 class _RouteInfo {
   final String routeId;
   final int directionId;
   final String serviceId;
   final int stopSequence;
-  _RouteInfo({required this.routeId, required this.directionId, required this.serviceId, required this.stopSequence});
+  _RouteInfo({
+    required this.routeId,
+    required this.directionId,
+    required this.serviceId,
+    required this.stopSequence,
+  });
 }
 
 class _Transfer {
   final String toStopId;
   final int walkTimeSeconds;
   final double walkDistMeters;
-  _Transfer({required this.toStopId, required this.walkTimeSeconds, required this.walkDistMeters});
+  _Transfer({
+    required this.toStopId,
+    required this.walkTimeSeconds,
+    required this.walkDistMeters,
+  });
 }
 
 class _State {
@@ -309,9 +369,12 @@ class _PathSegment {
   final String toStop;
   final double? walkDistMeters;
   _PathSegment.trip(this.tripId, this.routeId, this.fromStop, this.toStop)
-      : type = 'trip', walkDistMeters = null;
+      : type = 'trip',
+        walkDistMeters = null;
   _PathSegment.walk(this.fromStop, this.toStop, this.walkDistMeters)
-      : type = 'walk', tripId = null, routeId = null;
+      : type = 'walk',
+        tripId = null,
+        routeId = null;
 }
 
 class _BestCost {
