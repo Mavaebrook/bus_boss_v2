@@ -1,4 +1,4 @@
-import 'package:gtfs_realtime/gtfs_realtime.pb.dart' as pb;
+import 'package:gtfs_realtime_bindings/gtfs_realtime_bindings.dart' as pb;
 
 class FeedValidator {
   /// Must have trip_id, lat, lon.
