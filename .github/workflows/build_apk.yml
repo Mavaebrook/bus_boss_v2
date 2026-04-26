@@ -1,0 +1,45 @@
+name: Build Debug APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download latest GTFS database artifact
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: gtfs_etl.yml             # the name of your ETL workflow file
+          workflow_conclusion: success
+          name: lynx-gtfs-db                 # artifact name from ETL step
+          path: assets/gtfs/                 # target folder
+          check_artifacts: true
+        continue-on-error: true              # ignore if no artifact exists
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.22'
+          channel: 'stable'
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build debug APK
+        run: flutter build apk --debug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bus-boss-debug-apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 7
