@@ -2,46 +2,68 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:http/http.dart' as http;
+import 'package:transit_etl/transit_etl.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite3;
 import 'package:ui_shell/ui_shell.dart';
 import 'dart:io';
+
+// URL to download the latest LYNX GTFS zip (replace if necessary)
+const String gtfsFeedUrl =
+    'http://gtfsrt.golynx.com/gtfsrt/google_transit.zip';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // -------------------------------------------------------------------------
-  // STALE FEED CHECK – run on every cold launch
+  // STALE FEED CHECK + AUTO REFRESH
   // -------------------------------------------------------------------------
   try {
-    // Copy the pre‑shipped database from assets to app directory (first run)
     final dbDir = await getApplicationDocumentsDirectory();
     final dbPath = '${dbDir.path}/gtfs.db';
     final dbFile = File(dbPath);
-    if (!await dbFile.exists()) {
-      final bytes = await rootBundle.load('assets/gtfs/gtfs.db');
-      await dbFile.writeAsBytes(bytes.buffer.asUint8List());
+
+    // Determine if we need a fresh database
+    bool needsRefresh = !await dbFile.exists();
+    if (!needsRefresh) {
+      final db = sqlite3.sqlite3.open(dbPath);
+      final result = db.select('SELECT valid_to FROM feed_metadata LIMIT 1');
+      if (result.isNotEmpty) {
+        final validTo = result.first['valid_to'] as int;
+        final today = int.parse(
+          '${DateTime.now().year}'
+          '${DateTime.now().month.toString().padLeft(2, '0')}'
+          '${DateTime.now().day.toString().padLeft(2, '0')}',
+        );
+        if (validTo < today) {
+          needsRefresh = true;
+          debugPrint(
+              '⚠️ GTFS feed expired (valid_to=$validTo). Downloading new feed…');
+        }
+      }
+      db.dispose();
     }
 
-    // Open the database and read the latest valid_to date
-    final db = sqlite3.sqlite3.open(dbPath);
-    final result = db.select('SELECT valid_to FROM feed_metadata LIMIT 1');
-    if (result.isNotEmpty) {
-      final validTo = result.first['valid_to'] as int;           // YYYYMMDD
-      final today = int.parse(
-        '${DateTime.now().year}'
-        '${DateTime.now().month.toString().padLeft(2, '0')}'
-        '${DateTime.now().day.toString().padLeft(2, '0')}',
-      );
+    if (needsRefresh) {
+      // Download the GTFS zip and process it
+      debugPrint('📡 Downloading GTFS feed from $gtfsFeedUrl …');
+      final response = await http.get(Uri.parse(gtfsFeedUrl));
+      if (response.statusCode == 200) {
+        final tempZip = '${dbDir.path}/gtfs_update.zip';
+        await File(tempZip).writeAsBytes(response.bodyBytes);
 
-      if (validTo < today) {
-        // Feed is stale – for now log a warning.
-        // Later this will trigger a GTFS download + ETL run.
-        debugPrint('⚠️ GTFS feed expired (valid_to=$validTo). Update needed.');
+        debugPrint('⚙️ Running ETL pipeline…');
+        await buildDatabase(tempZip, dbPath);
+
+        debugPrint('✅ Database refreshed successfully.');
+        // Optionally delete the temp zip
+        await File(tempZip).delete();
+      } else {
+        debugPrint('❌ Failed to download feed (HTTP ${response.statusCode}).');
       }
     }
-    db.dispose();
   } catch (e) {
-    debugPrint('Could not check feed freshness: $e');
+    debugPrint('Feed check/download failed: $e');
     // App continues normally even if the check fails
   }
   // -------------------------------------------------------------------------
