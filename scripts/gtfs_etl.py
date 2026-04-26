@@ -571,6 +571,7 @@ def run_etl(gtfs_zip_path, db_path):
     # ------------------------------------------------------------------
     # VACUUM and finalize
     # ------------------------------------------------------------------
+    conn.commit()          # <-- close any pending
     conn.execute("VACUUM")
     conn.close()
     print(f"ETL complete. Database saved to {DB_PATH}")
