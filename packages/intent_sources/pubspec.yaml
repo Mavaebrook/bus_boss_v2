@@ -1,0 +1,22 @@
+name: intent_sources
+description: intent_sources silo for the LYNX Bus Routing system.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  contracts:
+    path: ../contracts
+  riverpod: ^2.5.1
+  rxdart: ^0.27.7
+  equatable: ^2.0.5
+
+dev_dependencies:
+  flutter_lints: ^3.0.0
+  googleapis: ^13.0.0
+  google_sign_in: ^6.2.1
+  flutter_secure_storage: ^9.0.0

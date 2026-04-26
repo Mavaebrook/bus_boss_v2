@@ -1,0 +1,58 @@
+name: bus_boss_v2
+description: "LYNX Bus Routing – modular, offline-first, risk-aware transit app"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  contracts:
+    path: packages/contracts
+  telemetry:
+    path: packages/telemetry
+  motion:
+    path: packages/motion
+  presence:
+    path: packages/presence
+  transit_etl:
+    path: packages/transit_etl
+  transit_query_engine:
+    path: packages/transit_query_engine
+  context_engine:
+    path: packages/context_engine
+  decision_engine:
+    path: packages/decision_engine
+  trip_coordinator:
+    path: packages/trip_coordinator
+  intent_sources:
+    path: packages/intent_sources
+  user_input:
+    path: packages/user_input
+  preferences:
+    path: packages/preferences
+  notification_policy:
+    path: packages/notification_policy
+  notification_silo:
+    path: packages/notification_silo
+  ui_shell:
+    path: packages/ui_shell
+  map_engine:
+    path: packages/map_engine
+  flutter_riverpod: ^2.5.1
+  rxdart: ^0.27.7
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  drift_dev: ^2.15.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/gtfs/
