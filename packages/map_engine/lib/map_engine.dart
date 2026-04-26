@@ -6,6 +6,7 @@ import 'package:user_input/user_input.dart';
 import 'package:transit_query_engine/transit_query_engine.dart';
 import 'dart:convert' show jsonDecode;
 import 'polyline_decoder.dart';
+import 'package:contracts/contracts.dart';   // ← add this line
 
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
