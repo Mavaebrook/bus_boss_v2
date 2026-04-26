@@ -24,8 +24,9 @@ android {
         applicationId = "com.busboss.bus_boss_v2"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        // Static values for debug APK – avoids Kotlin DSL property resolution error
+        versionCode = 1
+        versionName = "1.0.0"
     }
 
     buildTypes {
