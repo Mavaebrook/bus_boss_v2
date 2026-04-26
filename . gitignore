@@ -1,0 +1,4 @@
+# Generated GTFS database
+data/gtfs.db
+*.db
+*.sqlite
