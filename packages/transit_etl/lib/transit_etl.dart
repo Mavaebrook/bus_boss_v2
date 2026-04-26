@@ -1,10 +1,4 @@
-/// transit_etl silo – implementation placeholder.
-///
-/// Exposes its public API via contracts streams / services.
+/// transit_etl silo – builds the GTFS SQLite database from a zip file.
 library transit_etl;
 
-import 'package:contracts/contracts.dart';
-import 'package:riverpod/riverpod.dart';
-import 'package:rxdart/rxdart.dart';
-
-// TODO: implement transit_etl logic
+export 'src/etl_engine.dart';
