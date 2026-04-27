@@ -4,8 +4,9 @@ version: 1.0.0
 publish_to: none
 
 environment:
-  # Lifted to 3.2.0 to match the Query Engine's Native Assets requirement
-  sdk: ">=3.2.0 <4.0.0"
+  # Logic Correction: Lifted to match the root app's Native Assets requirement 
+  # for the sqlite3 v3 branch you are using.
+  sdk: ">=3.9.999 <4.0.0"
 
 dependencies:
   flutter:
@@ -23,9 +24,9 @@ dependencies:
   equatable: ^2.0.5
   
   # Mapping Stack
-  flutter_map: ^6.1.0
+  # Logic Correction: Upgraded to v7.0.0 to satisfy flutter_map_tile_caching v9.1.0
+  flutter_map: ^7.0.0
   latlong2: ^0.9.0
-  # Ensure this is version-locked with your sqlite3 version for the tile database
   flutter_map_tile_caching: ^9.1.0 
   
   # For smooth bus movement animations on the map
