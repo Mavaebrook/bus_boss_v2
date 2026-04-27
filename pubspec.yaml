@@ -61,4 +61,5 @@ flutter:
     - assets/gtfs/
 
 dependency_overrides:
+  sqlite3: 2.9.4
   geolocator_android: 4.3.0
