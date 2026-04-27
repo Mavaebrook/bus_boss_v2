@@ -13,8 +13,11 @@ const String gtfsFeedUrl =
     'http://gtfsrt.golynx.com/gtfsrt/google_transit.zip';
 
 void main() async {
+  // 1. Initialize Flutter bindings
   WidgetsFlutterBinding.ensureInitialized();
-  sqlite3.loadSqlite();   // ✅ Works with sqlite3 >=2.5.0
+
+  // 2. Removed sqlite3.loadSqlite() - This was causing the build failure.
+  // Native platforms (Android/iOS) do not require this call.
 
   String dbPath;
   try {
@@ -24,7 +27,9 @@ void main() async {
 
     bool needsRefresh = !await dbFile.exists();
     if (!needsRefresh) {
+      // 3. Open the database using the global sqlite3 instance
       final db = sqlite3.sqlite3.open(dbPath);
+      
       final result = db.select('SELECT valid_to FROM feed_metadata LIMIT 1');
       if (result.isNotEmpty) {
         final validTo = result.first['valid_to'] as int;
@@ -33,10 +38,10 @@ void main() async {
           '${DateTime.now().month.toString().padLeft(2, '0')}'
           '${DateTime.now().day.toString().padLeft(2, '0')}',
         );
+        
         if (validTo < today) {
           needsRefresh = true;
-          debugPrint(
-              '⚠️ GTFS feed expired (valid_to=$validTo). Downloading new feed…');
+          debugPrint('⚠️ GTFS feed expired (valid_to=$validTo). Downloading new feed…');
         }
       }
       db.dispose();
@@ -48,8 +53,11 @@ void main() async {
       if (response.statusCode == 200) {
         final tempZip = '${dbDir.path}/gtfs_update.zip';
         await File(tempZip).writeAsBytes(response.bodyBytes);
+        
         debugPrint('⚙️ Running ETL pipeline…');
+        // This processes the zip into the SQLite database file
         await buildDatabase(tempZip, dbPath);
+        
         debugPrint('✅ Database refreshed successfully.');
         await File(tempZip).delete();
       } else {
