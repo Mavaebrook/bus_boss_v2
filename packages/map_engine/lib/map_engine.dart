@@ -239,7 +239,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           urlTemplate:
               'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
           userAgentPackageName: 'com.busboss.bus_boss_v2',
-          retinaMode: RetinaMode.isHighDensity,
         ),
         if (_routePoints.isNotEmpty)
           PolylineLayer(polylines: [
