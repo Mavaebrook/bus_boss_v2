@@ -1,4 +1,4 @@
-name: Build Debug APK
+Name: Build Debug APK
 
 on:
   push:
@@ -28,11 +28,14 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44'        # ← upgraded from 3.22
-          channel: 'stable'
+          # Logic Correction: Use 'beta' channel to access the 3.44/3.9.999 SDK 
+          # required for your sqlite3 v3 native assets implementation.
+          channel: 'beta'
 
       - name: Get dependencies
         run: |
+          # Clean build artifacts to prevent stale cache interference
+          flutter clean
           rm -f pubspec.lock
           flutter pub get
 
@@ -45,3 +48,4 @@ jobs:
           name: bus-boss-debug-apk
           path: build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 7
+          
