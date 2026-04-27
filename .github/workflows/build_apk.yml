@@ -1,4 +1,4 @@
-Name: Build Debug APK
+name: build_debug_apk
 
 on:
   push:
@@ -28,13 +28,13 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          # Logic Correction: Use 'beta' channel to access the 3.44/3.9.999 SDK 
-          # required for your sqlite3 v3 native assets implementation.
+          # Logic Correction: Use 'beta' channel to access the 3.9.999 SDK 
+          # needed for your sqlite3 v3 native assets.
           channel: 'beta'
 
       - name: Get dependencies
         run: |
-          # Clean build artifacts to prevent stale cache interference
+          # Clean build artifacts to prevent legacy SDK cache interference
           flutter clean
           rm -f pubspec.lock
           flutter pub get
