@@ -60,5 +60,5 @@ flutter:
     - assets/images/
     - assets/gtfs/
 
- dependency_overrides:
-   geolocator_android: 4.3.0
+dependency_overrides:
+  geolocator_android: 4.3.0
