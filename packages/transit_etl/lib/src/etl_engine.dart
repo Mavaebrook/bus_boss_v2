@@ -14,10 +14,33 @@ const double latThreshold = 0.0027; // ~300m at Orlando latitude
 const double lonThreshold = 0.0031;
 
 // ---------------------------------------------------------------------------
-// Helper: "HH:MM:SS" → seconds (overnight times >24:00 kept exactly)
+// Helper: CSV Parser respecting quoted commas
+// ---------------------------------------------------------------------------
+List<String> _parseCsvRow(String row) {
+  final result = <String>[];
+  bool inQuotes = false;
+  final buf = StringBuffer();
+  for (int i = 0; i < row.length; i++) {
+    final c = row[i];
+    if (c == '"') {
+      inQuotes = !inQuotes;
+    } else if (c == ',' && !inQuotes) {
+      result.add(buf.toString().trim());
+      buf.clear();
+    } else {
+      buf.write(c);
+    }
+  }
+  result.add(buf.toString().trim());
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: "HH:MM:SS" → seconds
 // ---------------------------------------------------------------------------
 int timeToSeconds(String s) {
   final parts = s.trim().split(':');
+  if (parts.length != 3) return 0;
   return int.parse(parts[0]) * 3600 +
          int.parse(parts[1]) * 60 +
          int.parse(parts[2]);
@@ -27,17 +50,15 @@ int timeToSeconds(String s) {
 // Streaming interpolation – matches JS algorithm line for line
 // ---------------------------------------------------------------------------
 void interpolateStopTimes(List<Map<String, dynamic>> stopRows) {
-  // Pass 1 – convert known times to seconds
   for (final row in stopRows) {
-    final arr = (row['arrival_time'] as String).trim();
-    final dep = (row['departure_time'] as String).trim();
+    final arr = row['arrival_time'] as String;
+    final dep = row['departure_time'] as String;
     row['arr_sec'] = arr.isNotEmpty ? timeToSeconds(arr) : null;
     row['dep_sec'] = dep.isNotEmpty
         ? timeToSeconds(dep)
-        : row['arr_sec'] ?? null;
+        : row['arr_sec'];
   }
 
-  // Pass 2 – fill null segments
   int i = 0;
   while (i < stopRows.length) {
     if (stopRows[i]['arr_sec'] == null) {
@@ -50,41 +71,33 @@ void interpolateStopTimes(List<Map<String, dynamic>> stopRows) {
       if (left < 0 && right >= stopRows.length) break;
 
       if (left < 0) {
-        // Leading nulls
         int nextKnown = right + 1;
-        while (nextKnown < stopRows.length &&
-            stopRows[nextKnown]['arr_sec'] == null) {
+        while (nextKnown < stopRows.length && stopRows[nextKnown]['arr_sec'] == null) {
           nextKnown++;
         }
         final interval = (nextKnown < stopRows.length)
-            ? (stopRows[nextKnown]['arr_sec'] - stopRows[right]['arr_sec']) /
-                (nextKnown - right)
+            ? (stopRows[nextKnown]['arr_sec'] - stopRows[right]['arr_sec']) / (nextKnown - right)
             : 120;
         for (int k = i; k < right; k++) {
-          final t =
-              (stopRows[right]['arr_sec'] - ((right - k) * interval)).round();
+          final t = (stopRows[right]['arr_sec'] - ((right - k) * interval)).round();
           stopRows[k]['arr_sec'] = t;
           stopRows[k]['dep_sec'] = t;
         }
       } else if (right >= stopRows.length) {
-        // Trailing nulls
         int prevKnown = left - 1;
         while (prevKnown >= 0 && stopRows[prevKnown]['arr_sec'] == null) {
           prevKnown--;
         }
         final interval = (prevKnown >= 0)
-            ? (stopRows[left]['arr_sec'] - stopRows[prevKnown]['arr_sec']) /
-                (left - prevKnown)
+            ? (stopRows[left]['arr_sec'] - stopRows[prevKnown]['arr_sec']) / (left - prevKnown)
             : 120;
         for (int k = i; k < stopRows.length; k++) {
-          final t =
-              (stopRows[left]['arr_sec'] + ((k - left) * interval)).round();
+          final t = (stopRows[left]['arr_sec'] + ((k - left) * interval)).round();
           stopRows[k]['arr_sec'] = t;
           stopRows[k]['dep_sec'] = t;
         }
         break;
       } else {
-        // Bracketed nulls
         final t0 = stopRows[left]['arr_sec'] as int;
         final t1 = stopRows[right]['arr_sec'] as int;
         final span = right - left;
@@ -100,7 +113,6 @@ void interpolateStopTimes(List<Map<String, dynamic>> stopRows) {
     }
   }
 
-  // Finalise back to seconds
   for (final row in stopRows) {
     row['arrival_time_seconds'] = (row['arr_sec'] as int?) ?? 0;
     row['departure_time_seconds'] = (row['dep_sec'] as int?) ?? 0;
@@ -114,7 +126,6 @@ String encodePolyline(List<List<double>> points) {
   final buf = StringBuffer();
   int prevLat = 0, prevLng = 0;
   for (final p in points) {
-    // Round to 5dp to kill IEEE 754 artifacts
     final lat = (p[0] * 1e5).round();
     final lng = (p[1] * 1e5).round();
     for (final val in [lat, lng]) {
@@ -159,11 +170,10 @@ Future<void> buildDatabase(String gtfsZipPath, String outputDbPath) async {
   db.execute("PRAGMA synchronous=NORMAL");
   db.execute("PRAGMA foreign_keys=OFF");
 
-  // Staging tables – exact same schema as production
   const stagingTables = <String, String>{
-    'routes':   'CREATE TABLE _routes_staging (route_id TEXT PRIMARY KEY, route_short_name TEXT, route_long_name TEXT, route_type INTEGER)',
-    'stops':    'CREATE TABLE _stops_staging (stop_id TEXT PRIMARY KEY, stop_name TEXT, stop_lat REAL, stop_lon REAL, location_type INTEGER, wheelchair_boarding INTEGER)',
-    'trips':    'CREATE TABLE _trips_staging (trip_id TEXT PRIMARY KEY, route_id TEXT, service_id TEXT, direction_id INTEGER, shape_id TEXT)',
+    'routes': 'CREATE TABLE _routes_staging (route_id TEXT PRIMARY KEY, route_short_name TEXT, route_long_name TEXT, route_type INTEGER)',
+    'stops': 'CREATE TABLE _stops_staging (stop_id TEXT PRIMARY KEY, stop_name TEXT, stop_lat REAL, stop_lon REAL, location_type INTEGER, wheelchair_boarding INTEGER)',
+    'trips': 'CREATE TABLE _trips_staging (trip_id TEXT PRIMARY KEY, route_id TEXT, service_id TEXT, direction_id INTEGER, shape_id TEXT)',
     'stop_times': 'CREATE TABLE _stop_times_staging (trip_id TEXT, stop_sequence INTEGER, stop_id TEXT, arrival_time_seconds INTEGER, departure_time_seconds INTEGER, PRIMARY KEY(trip_id, stop_sequence))',
     'calendar': 'CREATE TABLE _calendar_staging (service_id TEXT PRIMARY KEY, monday INTEGER, tuesday INTEGER, wednesday INTEGER, thursday INTEGER, friday INTEGER, saturday INTEGER, sunday INTEGER, start_date INTEGER, end_date INTEGER)',
     'calendar_dates': 'CREATE TABLE _calendar_dates_staging (service_id TEXT, date INTEGER, exception_type INTEGER, PRIMARY KEY(service_id, date))',
@@ -176,174 +186,173 @@ Future<void> buildDatabase(String gtfsZipPath, String outputDbPath) async {
     'feed_metadata': 'CREATE TABLE _feed_metadata_staging (feed_id TEXT PRIMARY KEY, schema_version INTEGER NOT NULL, generated_at INTEGER NOT NULL, valid_from INTEGER NOT NULL, valid_to INTEGER NOT NULL)',
   };
 
-  for (final sql in stagingTables.values) {
-    db.execute(sql);
+  for (final entry in stagingTables.entries) {
+    db.execute('DROP TABLE IF EXISTS _${entry.key}_staging');
+    db.execute(entry.value);
   }
 
   final unixNow = DateTime.now().millisecondsSinceEpoch ~/ 1000;
   final stops = <Map<String, dynamic>>[];
 
-  // ---------- Parse GTFS zip ----------
   final zipBytes = File(gtfsZipPath).readAsBytesSync();
   final archive = ZipDecoder().decodeBytes(zipBytes);
 
   for (final file in archive) {
     final bytes = file.content as List<int>;
-    final lines = const Utf8Decoder().convert(bytes).split('\n');
-    final rows = lines.skip(1).where((l) => l.trim().isNotEmpty);
+    final lines = const Utf8Decoder().convert(bytes).split('\n').where((l) => l.trim().isNotEmpty).toList();
+    if (lines.isEmpty) continue;
+
+    final headerRow = _parseCsvRow(lines.first);
+    final headers = {for (int i = 0; i < headerRow.length; i++) headerRow[i]: i};
+
+    String _val(List<String> row, String colName) {
+      final idx = headers[colName];
+      return (idx != null && idx < row.length) ? row[idx] : '';
+    }
+
+    final dataRows = lines.skip(1);
 
     switch (file.name) {
       case 'routes.txt':
-        for (final row in rows) {
-          final vals = row.split(',');
+        for (final rawRow in dataRows) {
+          final row = _parseCsvRow(rawRow);
           db.execute(
             'INSERT INTO _routes_staging VALUES (?,?,?,?)',
-            [vals[0].trim(), vals[1].trim(), vals[2].trim(), int.parse(vals[3].trim())],
+            [_val(row, 'route_id'), _val(row, 'route_short_name'), _val(row, 'route_long_name'), int.tryParse(_val(row, 'route_type')) ?? 3],
           );
         }
         break;
 
       case 'stops.txt':
-        for (final row in rows) {
-          final vals = row.split(',');
-          final stop = {
-            'stop_id': vals[0].trim(),
-            'stop_name': vals[1].trim(),
-            'stop_lat': double.parse(vals[2].trim()),
-            'stop_lon': double.parse(vals[3].trim()),
-            'location_type': int.tryParse(vals[4].trim()) ?? 0,
-            'wheelchair_boarding': int.tryParse(vals[5].trim()) ?? 0,
-          };
-          stops.add(stop);
+        for (final rawRow in dataRows) {
+          final row = _parseCsvRow(rawRow);
+          final stopId = _val(row, 'stop_id');
+          final lat = double.tryParse(_val(row, 'stop_lat')) ?? 0.0;
+          final lon = double.tryParse(_val(row, 'stop_lon')) ?? 0.0;
+          
+          stops.add({
+            'stop_id': stopId,
+            'stop_lat': lat,
+            'stop_lon': lon,
+          });
           db.execute(
             'INSERT INTO _stops_staging VALUES (?,?,?,?,?,?)',
-            [stop['stop_id'], stop['stop_name'], stop['stop_lat'],
-             stop['stop_lon'], stop['location_type'], stop['wheelchair_boarding']],
+            [
+              stopId,
+              _val(row, 'stop_name'),
+              lat,
+              lon,
+              int.tryParse(_val(row, 'location_type')) ?? 0,
+              int.tryParse(_val(row, 'wheelchair_boarding')) ?? 0
+            ],
           );
         }
         break;
 
       case 'shapes.txt':
         final shapes = <String, List<Map<String, dynamic>>>{};
-        for (final row in rows) {
-          final vals = row.split(',');
-          final shapeId = vals[0].trim();
+        for (final rawRow in dataRows) {
+          final row = _parseCsvRow(rawRow);
+          final shapeId = _val(row, 'shape_id');
+          if (shapeId.isEmpty) continue;
+          
           shapes.putIfAbsent(shapeId, () => []);
           shapes[shapeId]!.add({
-            'lat': double.parse(vals[1].trim()),
-            'lon': double.parse(vals[2].trim()),
-            'seq': int.parse(vals[3].trim()),
+            'lat': double.tryParse(_val(row, 'shape_pt_lat')) ?? 0.0,
+            'lon': double.tryParse(_val(row, 'shape_pt_lon')) ?? 0.0,
+            'seq': int.tryParse(_val(row, 'shape_pt_sequence')) ?? 0,
           });
         }
         for (final entry in shapes.entries) {
-          final points = entry.value
-            ..sort((a, b) => (a['seq'] as int).compareTo(b['seq'] as int));
-          final poly = encodePolyline(
-            points.map((p) => [p['lat'] as double, p['lon'] as double]).toList(),
-          );
-          db.execute(
-            'INSERT INTO _trip_geometry_staging VALUES (?,?)',
-            [entry.key, poly],
-          );
+          final points = entry.value..sort((a, b) => (a['seq'] as int).compareTo(b['seq'] as int));
+          final poly = encodePolyline(points.map((p) => [p['lat'] as double, p['lon'] as double]).toList());
+          db.execute('INSERT INTO _trip_geometry_staging VALUES (?,?)', [entry.key, poly]);
         }
         break;
 
       case 'calendar.txt':
-        for (final row in rows) {
-          final vals = row.split(',');
+        for (final rawRow in dataRows) {
+          final row = _parseCsvRow(rawRow);
           db.execute(
             'INSERT INTO _calendar_staging VALUES (?,?,?,?,?,?,?,?,?,?)',
             [
-              vals[0].trim(),
-              int.parse(vals[1].trim()),
-              int.parse(vals[2].trim()),
-              int.parse(vals[3].trim()),
-              int.parse(vals[4].trim()),
-              int.parse(vals[5].trim()),
-              int.parse(vals[6].trim()),
-              int.parse(vals[7].trim()),
-              int.parse(vals[8].trim()),
-              int.parse(vals[9].trim()),
+              _val(row, 'service_id'),
+              int.tryParse(_val(row, 'monday')) ?? 0,
+              int.tryParse(_val(row, 'tuesday')) ?? 0,
+              int.tryParse(_val(row, 'wednesday')) ?? 0,
+              int.tryParse(_val(row, 'thursday')) ?? 0,
+              int.tryParse(_val(row, 'friday')) ?? 0,
+              int.tryParse(_val(row, 'saturday')) ?? 0,
+              int.tryParse(_val(row, 'sunday')) ?? 0,
+              int.tryParse(_val(row, 'start_date')) ?? 0,
+              int.tryParse(_val(row, 'end_date')) ?? 0,
             ],
           );
         }
         break;
 
       case 'calendar_dates.txt':
-        for (final row in rows) {
-          final vals = row.split(',');
+        for (final rawRow in dataRows) {
+          final row = _parseCsvRow(rawRow);
           db.execute(
             'INSERT INTO _calendar_dates_staging VALUES (?,?,?)',
-            [vals[0].trim(), int.parse(vals[1].trim()), int.parse(vals[2].trim())],
+            [_val(row, 'service_id'), int.tryParse(_val(row, 'date')) ?? 0, int.tryParse(_val(row, 'exception_type')) ?? 0],
           );
         }
         break;
 
       case 'trips.txt':
-        for (final row in rows) {
-          final vals = row.split(',');
+        for (final rawRow in dataRows) {
+          final row = _parseCsvRow(rawRow);
           db.execute(
             'INSERT INTO _trips_staging VALUES (?,?,?,?,?)',
             [
-              vals[0].trim(),
-              vals[1].trim(),
-              vals[2].trim(),
-              int.parse(vals[3].trim()),
-              vals[4].trim(),
+              _val(row, 'trip_id'),
+              _val(row, 'route_id'),
+              _val(row, 'service_id'),
+              int.tryParse(_val(row, 'direction_id')) ?? 0,
+              _val(row, 'shape_id'),
             ],
           );
         }
         break;
 
       case 'stop_times.txt':
-        // Stream by trip_id
         var currentTrip = '';
         var tripBuffer = <Map<String, dynamic>>[];
-        for (final row in rows) {
-          final vals = row.split(',');
-          final tripId = vals[0].trim();
-          if (currentTrip.isEmpty) currentTrip = tripId;
-          if (tripId != currentTrip) {
-            interpolateStopTimes(tripBuffer);
-            for (final st in tripBuffer) {
-              db.execute(
-                'INSERT INTO _stop_times_staging VALUES (?,?,?,?,?)',
-                [
-                  st['trip_id'],
-                  st['stop_sequence'],
-                  st['stop_id'],
-                  st['arrival_time_seconds'],
-                  st['departure_time_seconds'],
-                ],
-              );
-            }
-            tripBuffer = [];
-            currentTrip = tripId;
-          }
-          tripBuffer.add({
-            'trip_id': tripId,
-            'stop_sequence': int.parse(vals[1].trim()),
-            'stop_id': vals[2].trim(),
-            'arrival_time': vals[3].trim(),
-            'departure_time': vals[4].trim(),
-          });
-        }
-        // Last trip
-        if (tripBuffer.isNotEmpty) {
+        
+        void flushBuffer() {
+          if (tripBuffer.isEmpty) return;
+          tripBuffer.sort((a, b) => (a['stop_sequence'] as int).compareTo(b['stop_sequence'] as int));
           interpolateStopTimes(tripBuffer);
           for (final st in tripBuffer) {
             db.execute(
               'INSERT INTO _stop_times_staging VALUES (?,?,?,?,?)',
-              [
-                st['trip_id'],
-                st['stop_sequence'],
-                st['stop_id'],
-                st['arrival_time_seconds'],
-                st['departure_time_seconds'],
-              ],
+              [st['trip_id'], st['stop_sequence'], st['stop_id'], st['arrival_time_seconds'], st['departure_time_seconds']],
             );
           }
+          tripBuffer.clear();
         }
+
+        for (final rawRow in dataRows) {
+          final row = _parseCsvRow(rawRow);
+          final tripId = _val(row, 'trip_id');
+          if (currentTrip.isEmpty) currentTrip = tripId;
+          
+          if (tripId != currentTrip) {
+            flushBuffer();
+            currentTrip = tripId;
+          }
+          
+          tripBuffer.add({
+            'trip_id': tripId,
+            'stop_sequence': int.tryParse(_val(row, 'stop_sequence')) ?? 0,
+            'stop_id': _val(row, 'stop_id'),
+            'arrival_time': _val(row, 'arrival_time'),
+            'departure_time': _val(row, 'departure_time'),
+          });
+        }
+        flushBuffer();
         break;
 
       default:
@@ -352,9 +361,7 @@ Future<void> buildDatabase(String gtfsZipPath, String outputDbPath) async {
   }
 
   // ---------- Generate transfers ----------
-  final transferStmt = db.prepare(
-    'INSERT INTO _transfers_staging VALUES (?,?,?,?)',
-  );
+  final transferStmt = db.prepare('INSERT INTO _transfers_staging VALUES (?,?,?,?)');
   for (final s1 in stops) {
     for (final s2 in stops) {
       if (s1['stop_id'] == s2['stop_id']) continue;
@@ -362,16 +369,13 @@ Future<void> buildDatabase(String gtfsZipPath, String outputDbPath) async {
       final lon1 = s1['stop_lon'] as double;
       final lat2 = s2['stop_lat'] as double;
       final lon2 = s2['stop_lon'] as double;
+      
       if ((lat1 - lat2).abs() > latThreshold) continue;
       if ((lon1 - lon2).abs() > lonThreshold) continue;
+      
       final dist = haversineMeters(lat1, lon1, lat2, lon2);
       if (dist <= maxTransferRadiusM) {
-        transferStmt.execute([
-          s1['stop_id'],
-          s2['stop_id'],
-          2,
-          (dist / walkSpeedMps).round(),
-        ]);
+        transferStmt.execute([s1['stop_id'], s2['stop_id'], 2, (dist / walkSpeedMps).round()]);
       }
     }
   }
@@ -397,25 +401,19 @@ Future<void> buildDatabase(String gtfsZipPath, String outputDbPath) async {
     final start = row.columnAt(8) as int;
     final end = row.columnAt(9) as int;
 
-    var d = DateTime.parse(
-        '${start.toString().substring(0,4)}-${start.toString().substring(4,6)}-${start.toString().substring(6,8)}');
-    final endDate = DateTime.parse(
-        '${end.toString().substring(0,4)}-${end.toString().substring(4,6)}-${end.toString().substring(6,8)}');
+    var d = DateTime.parse('${start.toString().substring(0,4)}-${start.toString().substring(4,6)}-${start.toString().substring(6,8)}');
+    final endDate = DateTime.parse('${end.toString().substring(0,4)}-${end.toString().substring(4,6)}-${end.toString().substring(6,8)}');
 
     while (!d.isAfter(endDate)) {
-      final dateInt = int.parse(
-        '${d.year}${d.month.toString().padLeft(2,'0')}${d.day.toString().padLeft(2,'0')}',
-      );
-      if ((flags[d.weekday % 7] as int) == 1) {
+      final dateInt = int.parse('${d.year}${d.month.toString().padLeft(2,'0')}${d.day.toString().padLeft(2,'0')}');
+      if ((flags[d.weekday - 1] as int) == 1) {
         services.putIfAbsent(dateInt, () => {}).add(svcId);
       }
       d = d.add(const Duration(days: 1));
     }
   }
 
-  // Apply calendar_dates overrides
-  final cdRes = db.select(
-      'SELECT service_id, date, exception_type FROM _calendar_dates_staging');
+  final cdRes = db.select('SELECT service_id, date, exception_type FROM _calendar_dates_staging');
   for (final row in cdRes) {
     final svcId = row.columnAt(0) as String;
     final date = row.columnAt(1) as int;
@@ -454,32 +452,27 @@ Future<void> buildDatabase(String gtfsZipPath, String outputDbPath) async {
     db.execute(sql);
   }
 
-  // ---------- ANALYZE ----------
   db.execute('ANALYZE');
 
   // ---------- Atomic swap ----------
   db.execute('BEGIN');
   for (final table in stagingTables.keys) {
     db.execute('DROP TABLE IF EXISTS $table');
-    db.execute('ALTER TABLE _$table\_staging RENAME TO $table');
+    db.execute('ALTER TABLE _${table}_staging RENAME TO $table');
   }
-  db.execute('COMMIT');
 
   // ---------- Operational rows ----------
   final calBounds = db.select('SELECT MIN(start_date), MAX(end_date) FROM calendar');
-  final from = calBounds.first.columnAt(0) as int;
-  final to = calBounds.first.columnAt(1) as int;
+  final from = calBounds.first.columnAt(0) as int? ?? 0;
+  final to = calBounds.first.columnAt(1) as int? ?? 0;
 
   db.execute(
     'INSERT INTO feed_metadata VALUES (?,?,?,?,?)',
     ['lynx', 1, unixNow, from, to],
   );
 
-  for (final fname in ['routes.txt','stops.txt','shapes.txt','trips.txt',
-                        'stop_times.txt','calendar.txt','calendar_dates.txt']) {
-    final layer = (fname == 'routes.txt' || fname == 'stops.txt' || fname == 'shapes.txt')
-        ? 'static'
-        : 'volatile';
+  for (final fname in ['routes.txt','stops.txt','shapes.txt','trips.txt', 'stop_times.txt','calendar.txt','calendar_dates.txt']) {
+    final layer = (fname == 'routes.txt' || fname == 'stops.txt' || fname == 'shapes.txt') ? 'static' : 'volatile';
     db.execute(
       'INSERT INTO source_file_versions VALUES (?,?,?,?)',
       [fname, 'hash_not_used_yet', unixNow, layer],
@@ -492,7 +485,7 @@ Future<void> buildDatabase(String gtfsZipPath, String outputDbPath) async {
   );
 
   // ---------- Finalise ----------
-  db.execute('COMMIT'); // close any pending txn
+  db.execute('COMMIT'); 
   db.execute('VACUUM');
   db.dispose();
   print('ETL complete → $outputDbPath');
