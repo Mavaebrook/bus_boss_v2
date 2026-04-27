@@ -32,7 +32,9 @@ jobs:
           channel: 'stable'
 
       - name: Get dependencies
-        run: flutter pub get
+        run: |
+          rm -f pubspec.lock
+          flutter pub get
 
       - name: Build debug APK
         run: flutter build apk --debug
