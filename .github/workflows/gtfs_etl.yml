@@ -25,7 +25,7 @@ jobs:
           mkdir -p data
           curl -L -o data/gtfs.zip "http://gtfsrt.golynx.com/gtfsrt/google_transit.zip"
       - name: Run ETL pipeline
-        run: python scripts/gtfs_etl.py data/gtfs.zip data/gtfs.db
+        run: python scripts/gemini_gtfs.py data/gtfs.zip data/gtfs.db
 
       - name: Upload database artifact
         uses: actions/upload-artifact@v4
