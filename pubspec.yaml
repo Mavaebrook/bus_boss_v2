@@ -63,3 +63,4 @@ flutter:
 dependency_overrides:
   sqlite3: 2.9.4
   geolocator_android: 4.3.0
+  sqlite3_flutter_libs: ^0.5.42
