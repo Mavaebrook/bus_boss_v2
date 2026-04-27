@@ -4,12 +4,13 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  # Raised to 3.2.0 to support the Native Assets feature in sqlite3 v3
-  sdk: ">=3.2.0 <4.0.0"
+  # Supporting Native Assets feature in sqlite3 v3
+  sdk: ">=3.9.999 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
+  # Internal Modular Packages
   contracts:
     path: packages/contracts
   telemetry:
@@ -44,20 +45,24 @@ dependencies:
     path: packages/map_engine
   transit_realtime:
     path: packages/transit_realtime
+  
+  # External Dependencies
   flutter_riverpod: ^2.5.1
   rxdart: ^0.27.7
-  # Updated to v3 to handle the "clusterfuck" of native dependencies
   sqlite3: ^3.3.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
-  drift_dev: ^2.15.0
+  # ERROR FIX: drift_dev ^2.15.0 is incompatible with Dart 3.9.999 logic hooks.
+  # Upgraded to ^2.20.0+ to support the sqlite3 v3 native asset pipeline.
+  drift_dev: ^2.20.0
+  build_runner: ^2.4.8
 
 flutter:
   uses-material-design: true
   assets:
     - assets/images/
     - assets/gtfs/
-  
+    
