@@ -1,22 +1,38 @@
 name: map_engine
-description: map_engine silo for the LYNX Bus Routing system.
+description: map_engine silo for the LYNX Bus Routing system. renders routes and live bus positions.
 version: 1.0.0
 publish_to: none
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  # Lifted to 3.2.0 to match the Query Engine's Native Assets requirement
+  sdk: ">=3.2.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
+  
+  # Internal Silos
   contracts:
     path: ../contracts
+  transit_realtime:
+    path: ../transit_realtime
+    
+  # State & Logic
   riverpod: ^2.5.1
   rxdart: ^0.27.7
   equatable: ^2.0.5
+  
+  # Mapping Stack
   flutter_map: ^6.1.0
   latlong2: ^0.9.0
-  flutter_map_tile_caching: ^9.0.0
+  # Ensure this is version-locked with your sqlite3 version for the tile database
+  flutter_map_tile_caching: ^9.1.0 
+  
+  # For smooth bus movement animations on the map
+  flutter_animarker: ^3.0.0 
 
 dev_dependencies:
+  flutter_test:
+    sdk: flutter
   flutter_lints: ^3.0.0
+  
