@@ -4,7 +4,8 @@ version: 1.0.0
 publish_to: none
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  # Native Assets support requires Dart 3.2+
+  sdk: ">=3.2.0 <4.0.0"
 
 dependencies:
   flutter:
@@ -14,13 +15,17 @@ dependencies:
   riverpod: ^2.5.1
   rxdart: ^0.27.7
   equatable: ^2.0.5
-  drift: ^2.15.0
-  sqlite3: ^2.9.4
-  sqlite3_flutter_libs: ^0.5.42
+  # Upgrade drift to support the Native Assets architecture
+  drift: ^2.32.1
+  # Upgrade sqlite3 to use pre-compiled native binaries
+  sqlite3: ^3.3.1
+  # DELETE sqlite3_flutter_libs - it is the source of the Gradle/NDK clusterfuck
   path_provider: ^2.1.0
-  archive: ^3.6.1   # for reading GTFS zip files
+  archive: ^3.6.1
 
 dev_dependencies:
   flutter_lints: ^3.0.0
-  drift_dev: ^2.15.0
+  # Keep drift_dev in sync with the drift version
+  drift_dev: ^2.32.1
   build_runner: ^2.4.8
+  
