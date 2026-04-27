@@ -168,3 +168,43 @@ class FeedMetadatas extends Table {
   @override
   Set<Column> get primaryKey => {feedId};
 }
+
+// ... existing table definitions ...
+
+@DriftDatabase(tables: [
+  Routes,
+  Trips,
+  StopTimes,
+  Stops,
+  TripGeometries,
+  Calendars,
+  CalendarDates,
+  ActiveServices,
+  Transfers,
+  StopRouteMaps,
+  SourceFileVersions,
+  ServiceRuntimeStates,
+  FeedMetadatas,
+])
+class AppDatabase extends _$AppDatabase {
+  // The database constructor. We'll pass the connection here.
+  AppDatabase(QueryExecutor e) : super(e);
+
+  // Increment this whenever you change a table definition above
+  @override
+  int get schemaVersion => 1;
+
+  // Since the Python ETL script creates the schema, we tell Drift 
+  // to assume the tables already exist and not try to create them.
+  @override
+  MigrationStrategy get migration {
+    return MigrationStrategy(
+      onCreate: (m) async {
+        // Do nothing; Python ETL handles table creation
+      },
+      onUpgrade: (m, from, to) async {
+        // Handle migrations if you change the schema in the future
+      },
+    );
+  }
+}
