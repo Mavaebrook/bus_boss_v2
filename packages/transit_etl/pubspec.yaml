@@ -15,7 +15,8 @@ dependencies:
   rxdart: ^0.27.7
   equatable: ^2.0.5
   drift: ^2.15.0
-  sqlite3: ^3.0.0
+  sqlite3: ^2.9.4
+  sqlite3_flutter_libs: ^0.5.42
   path_provider: ^2.1.0
   archive: ^3.6.1   # for reading GTFS zip files
 
