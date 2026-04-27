@@ -5,27 +5,23 @@ import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:transit_etl/transit_etl.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite3;
-import 'package:transit_query_engine/transit_query_engine.dart';  // ← new import
+import 'package:transit_query_engine/transit_query_engine.dart';
 import 'package:ui_shell/ui_shell.dart';
 import 'dart:io';
 
-// URL to download the latest LYNX GTFS zip (replace if necessary)
 const String gtfsFeedUrl =
     'http://gtfsrt.golynx.com/gtfsrt/google_transit.zip';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  sqlite3.loadSqlite();   // ← CRITICAL: load the native SQLite library before any DB use
 
-  // -------------------------------------------------------------------------
-  // STALE FEED CHECK + AUTO REFRESH
-  // -------------------------------------------------------------------------
-  String dbPath;   // will be set inside the try‑block
+  String dbPath;
   try {
     final dbDir = await getApplicationDocumentsDirectory();
     dbPath = '${dbDir.path}/gtfs.db';
     final dbFile = File(dbPath);
 
-    // Determine if we need a fresh database
     bool needsRefresh = !await dbFile.exists();
     if (!needsRefresh) {
       final db = sqlite3.sqlite3.open(dbPath);
@@ -47,31 +43,24 @@ void main() async {
     }
 
     if (needsRefresh) {
-      // Download the GTFS zip and process it
       debugPrint('📡 Downloading GTFS feed from $gtfsFeedUrl …');
       final response = await http.get(Uri.parse(gtfsFeedUrl));
       if (response.statusCode == 200) {
         final tempZip = '${dbDir.path}/gtfs_update.zip';
         await File(tempZip).writeAsBytes(response.bodyBytes);
-
         debugPrint('⚙️ Running ETL pipeline…');
         await buildDatabase(tempZip, dbPath);
-
         debugPrint('✅ Database refreshed successfully.');
-        // Optionally delete the temp zip
         await File(tempZip).delete();
       } else {
         debugPrint('❌ Failed to download feed (HTTP ${response.statusCode}).');
       }
     }
   } catch (e) {
-    // If the feed check fails, we still need a value for dbPath.
-    // Fallback to a known location (the app directory).
     final dbDir = await getApplicationDocumentsDirectory();
     dbPath = '${dbDir.path}/gtfs.db';
     debugPrint('Feed check/download failed: $e');
   }
-  // -------------------------------------------------------------------------
 
   runApp(
     ProviderScope(
