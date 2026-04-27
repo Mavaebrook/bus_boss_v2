@@ -1,4 +1,4 @@
-import 'package:collection/collection.dart';   // for PriorityQueue
+import 'package:collection/collection.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite3;
 import 'package:contracts/contracts.dart';
 import 'package:transit_realtime/transit_realtime.dart';
@@ -14,25 +14,39 @@ class TransitQueryEngine {
   // -------------------------------------------------------------------------
   List<String> getActiveServiceIds(int date) {
     final db = sqlite3.sqlite3.open(dbPath);
+    try {
+      return _getActiveServiceIdsWithDb(db, date);
+    } finally {
+      db.dispose();
+    }
+  }
+
+  List<String> _getActiveServiceIdsWithDb(sqlite3.Database db, int date) {
     final rows = db.select(
       'SELECT service_id FROM active_services WHERE service_date = ?',
       [date],
     );
-    db.dispose();
-    return rows.map((r) => r.columnAt(0) as String).toList();
+    return rows.map((r) => r['service_id'] as String).toList();
   }
 
   int _dateToInt(DateTime d) =>
       d.year * 10000 + d.month * 100 + d.day;
 
-  int _dateTimeToSeconds(DateTime dt) =>
-      dt.hour * 3600 + dt.minute * 60 + dt.second;
+  /// Calculates seconds relative to the midnight of [baseDate] to prevent 
+  /// wraparound bugs when a trip crosses midnight into the next day.
+  int _dateTimeToSeconds(DateTime dt, DateTime baseDate) {
+    final baseMidnight = DateTime(baseDate.year, baseDate.month, baseDate.day);
+    final targetMidnight = DateTime(dt.year, dt.month, dt.day);
+    final daysDiff = targetMidnight.difference(baseMidnight).inDays;
+    
+    return (daysDiff * 86400) + (dt.hour * 3600) + (dt.minute * 60) + dt.second;
+  }
 
-  DateTime _secondsToDateTime(int secs, DateTime day) {
+  DateTime _secondsToDateTime(int secs, DateTime baseDate) {
     final hours = secs ~/ 3600;
     final mins = (secs % 3600) ~/ 60;
     final sec = secs % 60;
-    return DateTime(day.year, day.month, day.day, hours % 24, mins, sec)
+    return DateTime(baseDate.year, baseDate.month, baseDate.day, hours % 24, mins, sec)
         .add(Duration(days: hours ~/ 24));
   }
 
@@ -40,27 +54,34 @@ class TransitQueryEngine {
   // Snap to nearest stop
   // -------------------------------------------------------------------------
   Map<String, String>? snapToRoute(double lat, double lon) {
-  print('🔍 snapToRoute($lat, $lon)  dbPath=$dbPath');
-  final db = sqlite3.sqlite3.open(dbPath);
-  final row = db.select(
-    '''SELECT s.stop_id, t.trip_id, t.shape_id
-       FROM stop_times st
-       JOIN trips t ON st.trip_id = t.trip_id
-       JOIN stops s ON st.stop_id = s.stop_id
-       ORDER BY ((s.stop_lat - ?)*(s.stop_lat - ?) + (s.stop_lon - ?)*(s.stop_lon - ?))
-       LIMIT 1''',
-    [lat, lat, lon, lon],
-  );
-  db.dispose();
-  print('🔍 snapToRoute query returned ${row.length} rows');
-  if (row.isEmpty) return null;
-  final result = {
-    'stop_id': row.first.columnAt(0) as String,
-    'trip_id': row.first.columnAt(1) as String,
-    'shape_id': row.first.columnAt(2) as String,
-  };
-  print('🔍 snapToRoute result: $result');
-  return result;
+    print('🔍 snapToRoute($lat, $lon)  dbPath=$dbPath');
+    final db = sqlite3.sqlite3.open(dbPath);
+    
+    try {
+      final row = db.select(
+        '''SELECT s.stop_id, t.trip_id, t.shape_id
+           FROM stop_times st
+           JOIN trips t ON st.trip_id = t.trip_id
+           JOIN stops s ON st.stop_id = s.stop_id
+           ORDER BY ((s.stop_lat - ?)*(s.stop_lat - ?) + (s.stop_lon - ?)*(s.stop_lon - ?))
+           LIMIT 1''',
+        [lat, lat, lon, lon],
+      );
+      
+      print('🔍 snapToRoute query returned ${row.length} rows');
+      if (row.isEmpty) return null;
+      
+      final result = {
+        'stop_id': row.first['stop_id'] as String,
+        'trip_id': row.first['trip_id'] as String,
+        'shape_id': row.first['shape_id'] as String,
+      };
+      
+      print('🔍 snapToRoute result: $result');
+      return result;
+    } finally {
+      db.dispose();
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -76,100 +97,106 @@ class TransitQueryEngine {
     bool wheelchairAccessible = false,
   }) {
     final db = sqlite3.sqlite3.open(dbPath);
-    final tripDate = _dateToInt(deadline);
-    final activeServices = getActiveServiceIds(tripDate).toSet();
+    
+    try {
+      final baseDate = earliestDeparture ?? DateTime.now();
+      final startTime = earliestDeparture ?? DateTime.now().add(const Duration(minutes: 10));
+      
+      final tripDate = _dateToInt(baseDate);
+      final activeServices = _getActiveServiceIdsWithDb(db, tripDate).toSet();
 
-    final stopRouteMap = <String, List<_RouteInfo>>{};
-    final transferMap = <String, List<_Transfer>>{};
+      final stopRouteMap = <String, List<_RouteInfo>>{};
+      final transferMap = <String, List<_Transfer>>{};
 
-    final queue = PriorityQueue<_State>((a, b) => a.time.compareTo(b.time));
-    final best = <String, _BestCost>{};
+      final queue = PriorityQueue<_State>((a, b) => a.time.compareTo(b.time));
+      final best = <String, _BestCost>{};
 
-    final startTime = earliestDeparture ??
-        DateTime.now().add(const Duration(minutes: 10));
-    final startSeconds = _dateTimeToSeconds(startTime);
+      final startSeconds = _dateTimeToSeconds(startTime, baseDate);
+      final deadlineSeconds = _dateTimeToSeconds(deadline, baseDate);
 
-    queue.add(_State(fromStopId, startSeconds, [], 0, 0));
-    best[fromStopId] = _BestCost(startSeconds, 0, 0);
+      queue.add(_State(fromStopId, startSeconds, [], 0, 0));
+      best[fromStopId] = _BestCost(startSeconds, 0, 0);
 
-    while (queue.isNotEmpty) {
-      final state = queue.removeFirst();
+      while (queue.isNotEmpty) {
+        final state = queue.removeFirst();
 
-      if (state.stopId == toStopId &&
-          state.time <= _dateTimeToSeconds(deadline)) {
-        final segments = _buildSegments(db, state.path, state.time, deadline);
-        db.dispose();
-        return TripPlan(
-          segments: segments,
-          departureTime: _secondsToDateTime(startSeconds, deadline),
-          arrivalTime: _secondsToDateTime(state.time, deadline),
-          walkDistanceMeters: state.walkDist,
-          transferCount: state.transfers,
-        );
-      }
+        if (state.stopId == toStopId && state.time <= deadlineSeconds) {
+          final segments = _buildSegments(db, state.path, state.time, baseDate);
+          return TripPlan(
+            segments: segments,
+            departureTime: _secondsToDateTime(startSeconds, baseDate),
+            arrivalTime: _secondsToDateTime(state.time, baseDate),
+            walkDistanceMeters: state.walkDist,
+            transferCount: state.transfers,
+          );
+        }
 
-      // 1. Board a trip from current stop
-      final routes = _getRoutesFromStop(db, state.stopId, stopRouteMap);
-      for (final route in routes) {
-        if (!activeServices.contains(route.serviceId)) continue;
+        // 1. Board a trip from current stop
+        final routes = _getRoutesFromStop(db, state.stopId, stopRouteMap);
+        for (final route in routes) {
+          if (!activeServices.contains(route.serviceId)) continue;
 
-        final departure = _getNextDeparture(
-          db,
-          state.stopId,
-          route.routeId,
-          route.directionId,
-          state.time,
-        );
-        if (departure == null) continue;
+          final departure = _getNextDeparture(
+            db,
+            state.stopId,
+            route.routeId,
+            route.directionId,
+            state.time,
+          );
+          if (departure == null) continue;
 
-        final tripId = departure['trip_id'] as String;
-        final depTime = departure['departure_time_seconds'] as int;
+          final tripId = departure['trip_id'] as String;
+          final stopsOnTrip = _getStopsOnTrip(db, tripId, departure['stop_sequence'] as int);
+          
+          for (final stopEntry in stopsOnTrip) {
+            final nextStopId = stopEntry['stop_id'] as String;
+            final arrTime = stopEntry['arrival_time_seconds'] as int;
+            
+            if (arrTime > deadlineSeconds) continue;
 
-        final stopsOnTrip = _getStopsOnTrip(db, tripId, departure['stop_sequence'] as int);
-        for (final stopEntry in stopsOnTrip) {
-          final nextStopId = stopEntry['stop_id'] as String;
-          final arrTime = stopEntry['arrival_time_seconds'] as int;
-          if (arrTime > _dateTimeToSeconds(deadline)) continue;
+            final newPath = [...state.path, _PathSegment.trip(tripId, route.routeId, state.stopId, nextStopId)];
+            final newTime = arrTime;
+            final newTransfers = state.transfers;
+            final newWalkDist = state.walkDist;
 
-          final newPath = [...state.path, _PathSegment.trip(tripId, route.routeId, state.stopId, nextStopId)];
-          final newTime = arrTime;
-          final newTransfers = state.transfers;
-          final newWalkDist = state.walkDist;
+            final prev = best[nextStopId];
+            if (prev == null || newTime < prev.time || (newTime == prev.time && newTransfers < prev.transfers)) {
+              best[nextStopId] = _BestCost(newTime, newTransfers, newWalkDist);
+              queue.add(_State(nextStopId, newTime, newPath, newTransfers, newWalkDist));
+            }
+          }
+        }
 
-          final prev = best[nextStopId];
+        // 2. Walk to nearby stops
+        final transfers = _getTransfersFromStop(db, state.stopId, transferMap);
+        for (final t in transfers) {
+          if (t.walkTimeSeconds > maxWalkMeters / 1.2) continue;
+          
+          final newTime = state.time + t.walkTimeSeconds;
+          if (newTime > deadlineSeconds) continue;
+          
+          final nextStop = t.toStopId;
+          final newTransfers = state.transfers + 1;
+          if (newTransfers > maxTransfers) continue;
+          
+          final newWalkDist = state.walkDist + t.walkDistMeters;
+
+          final prev = best[nextStop];
           if (prev == null || newTime < prev.time || (newTime == prev.time && newTransfers < prev.transfers)) {
-            best[nextStopId] = _BestCost(newTime, newTransfers, newWalkDist);
-            queue.add(_State(nextStopId, newTime, newPath, newTransfers, newWalkDist));
+            best[nextStop] = _BestCost(newTime, newTransfers, newWalkDist);
+            final newPath = [...state.path, _PathSegment.walk(state.stopId, nextStop, t.walkDistMeters)];
+            queue.add(_State(nextStop, newTime, newPath, newTransfers, newWalkDist));
           }
         }
       }
-
-      // 2. Walk to nearby stops
-      final transfers = _getTransfersFromStop(db, state.stopId, transferMap);
-      for (final t in transfers) {
-        if (t.walkTimeSeconds > maxWalkMeters / 1.2) continue;
-        final newTime = state.time + t.walkTimeSeconds;
-        if (newTime > _dateTimeToSeconds(deadline)) continue;
-        final nextStop = t.toStopId;
-        final newTransfers = state.transfers + 1;
-        if (newTransfers > maxTransfers) continue;
-        final newWalkDist = state.walkDist + t.walkDistMeters;
-
-        final prev = best[nextStop];
-        if (prev == null || newTime < prev.time || (newTime == prev.time && newTransfers < prev.transfers)) {
-          best[nextStop] = _BestCost(newTime, newTransfers, newWalkDist);
-          final newPath = [...state.path, _PathSegment.walk(state.stopId, nextStop, t.walkDistMeters)];
-          queue.add(_State(nextStop, newTime, newPath, newTransfers, newWalkDist));
-        }
-      }
+      return null;
+    } finally {
+      db.dispose();
     }
-
-    db.dispose();
-    return null;
   }
 
   // -------------------------------------------------------------------------
-  // Database queries (all now accept sqlite3.Database)
+  // Database queries 
   // -------------------------------------------------------------------------
   List<_RouteInfo> _getRoutesFromStop(
       sqlite3.Database db, String stopId, Map<String, List<_RouteInfo>> cache) {
@@ -186,10 +213,10 @@ class TransitQueryEngine {
     );
     final list = rows
         .map((r) => _RouteInfo(
-              routeId: r.columnAt(0) as String,
-              directionId: r.columnAt(1) as int,
-              serviceId: r.columnAt(2) as String,
-              stopSequence: r.columnAt(3) as int,
+              routeId: r['route_id'] as String,
+              directionId: r['direction_id'] as int,
+              serviceId: r['service_id'] as String,
+              stopSequence: r['first_sequence'] as int,
             ))
         .toList();
     cache[stopId] = list;
@@ -215,9 +242,9 @@ class TransitQueryEngine {
     );
     if (rows.isEmpty) return null;
     return {
-      'trip_id': rows.first.columnAt(0) as String,
-      'departure_time_seconds': rows.first.columnAt(1) as int,
-      'stop_sequence': rows.first.columnAt(2) as int,
+      'trip_id': rows.first['trip_id'] as String,
+      'departure_time_seconds': rows.first['departure_time_seconds'] as int,
+      'stop_sequence': rows.first['stop_sequence'] as int,
     };
   }
 
@@ -235,8 +262,8 @@ class TransitQueryEngine {
     );
     return rows
         .map((r) => {
-              'stop_id': r.columnAt(0) as String,
-              'arrival_time_seconds': r.columnAt(1) as int,
+              'stop_id': r['stop_id'] as String,
+              'arrival_time_seconds': r['arrival_time_seconds'] as int,
             })
         .toList();
   }
@@ -252,9 +279,9 @@ class TransitQueryEngine {
     );
     final list = rows
         .map((r) => _Transfer(
-              toStopId: r.columnAt(0) as String,
-              walkTimeSeconds: r.columnAt(1) as int,
-              walkDistMeters: (r.columnAt(1) as int) * 1.2,
+              toStopId: r['to_stop_id'] as String,
+              walkTimeSeconds: r['min_transfer_time'] as int,
+              walkDistMeters: (r['min_transfer_time'] as int) * 1.2,
             ))
         .toList();
     cache[stopId] = list;
@@ -265,7 +292,7 @@ class TransitQueryEngine {
   // Build final route segments with shape polylines
   // -------------------------------------------------------------------------
   List<RouteSegment> _buildSegments(
-      sqlite3.Database db, List<_PathSegment> path, int endTime, DateTime day) {
+      sqlite3.Database db, List<_PathSegment> path, int endTime, DateTime baseDate) {
     final segments = <RouteSegment>[];
 
     for (final p in path) {
@@ -287,10 +314,10 @@ class TransitQueryEngine {
              FROM trip_geometry tg
              JOIN trips t ON tg.shape_id = t.shape_id
              WHERE t.trip_id = ?''',
-          [p.tripId],
+          [p.tripId!],
         );
         if (shapeRows.isNotEmpty) {
-          polyline = shapeRows.first.columnAt(0) as String?;
+          polyline = shapeRows.first[0] as String?;
         }
 
         final stopTimesRows = db.select(
@@ -298,13 +325,14 @@ class TransitQueryEngine {
              FROM stop_times
              WHERE trip_id = ? AND stop_id IN (?, ?)
              ORDER BY stop_sequence''',
-          [p.tripId, p.fromStop, p.toStop],
+          [p.tripId!, p.fromStop, p.toStop],
         );
+        
         int depSec = 0, arrSec = 0;
         for (final r in stopTimesRows) {
-          final sid = r.columnAt(0) as String;
-          final dep = r.columnAt(1) as int;
-          final arr = r.columnAt(2) as int;
+          final sid = r['stop_id'] as String;
+          final dep = r['departure_time_seconds'] as int;
+          final arr = r['arrival_time_seconds'] as int;
           if (sid == p.fromStop) depSec = dep;
           if (sid == p.toStop) arrSec = arr;
         }
@@ -326,7 +354,7 @@ class TransitQueryEngine {
 }
 
 // ---------------------------------------------------------------------------
-// Internal helper classes (unchanged)
+// Internal helper classes
 // ---------------------------------------------------------------------------
 class _RouteInfo {
   final String routeId;
