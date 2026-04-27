@@ -4,7 +4,7 @@ version: 1.0.0
 publish_to: none
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ">=3.2.0 <4.0.0" # Lifted to support Native Assets build hooks
 
 dependencies:
   flutter:
@@ -13,12 +13,17 @@ dependencies:
     path: ../contracts
   transit_realtime:
     path: ../transit_realtime
-  sqlite3: ^2.9.4
-  sqlite3_flutter_libs: ^0.5.42
+  # Upgrade to 3.x to match the ETL and Database packages
+  sqlite3: ^3.3.1
+  # REMOVED: sqlite3_flutter_libs (v3.x bundles the library via Dart Native Assets)
+  
   riverpod: ^2.5.1
   rxdart: ^0.27.7
   equatable: ^2.0.5
   collection: ^1.18.0
 
 dev_dependencies:
+  flutter_test:
+    sdk: flutter
   flutter_lints: ^3.0.0
+  
