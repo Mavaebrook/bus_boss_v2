@@ -4,7 +4,8 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  # Raised to 3.2.0 to support the Native Assets feature in sqlite3 v3
+  sdk: ">=3.2.0 <4.0.0"
 
 dependencies:
   flutter:
@@ -45,8 +46,8 @@ dependencies:
     path: packages/transit_realtime
   flutter_riverpod: ^2.5.1
   rxdart: ^0.27.7
-  sqlite3: ^2.9.4
-  sqlite3_flutter_libs: ^0.5.42
+  # Updated to v3 to handle the "clusterfuck" of native dependencies
+  sqlite3: ^3.3.1
 
 dev_dependencies:
   flutter_test:
@@ -59,8 +60,4 @@ flutter:
   assets:
     - assets/images/
     - assets/gtfs/
-
-dependency_overrides:
-  sqlite3: 2.9.4
-  geolocator_android: 4.3.0
-  sqlite3_flutter_libs: ^0.5.42
+  
