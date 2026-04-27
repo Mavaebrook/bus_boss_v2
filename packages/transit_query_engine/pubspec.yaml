@@ -13,7 +13,7 @@ dependencies:
     path: ../contracts
   transit_realtime:
     path: ../transit_realtime
-  sqlite3: ^2.4.0
+  sqlite3: ^3.0.0
   riverpod: ^2.5.1
   rxdart: ^0.27.7
   equatable: ^2.0.5
